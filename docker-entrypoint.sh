@@ -59,7 +59,7 @@ fi
 export PYTHONUNBUFFERED=1
 export PYTHONIOENCODING=utf-8
 export HOSTNAME="0.0.0.0"
-export PORT="3000"
+export PORT="${PORT:-3000}"
 export LEARNHOUSE_PORT="9000"
 export NODE_ENV="production"
 
