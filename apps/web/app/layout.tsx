@@ -3,6 +3,8 @@ import React from 'react'
 import Providers from '@components/Providers'
 import { Wix_Madefor_Text } from 'next/font/google'
 
+export const dynamic = 'force-dynamic';
+
 const wixMadeforText = Wix_Madefor_Text({
   subsets: ['latin'],
   display: 'swap',
