@@ -87,6 +87,7 @@ def configure_cors(app: FastAPI) -> None:
     """Register CORS middleware on ``app`` with tenancy-aware origin policy."""
     app.add_middleware(
         CORSMiddleware,
+        allow_origins=["https://learnhouse-29cb.onrender.com"],
         allow_origin_regex=get_cors_origin_regex(),
         allow_methods=["*"],
         allow_credentials=True,
