@@ -1,4 +1,4 @@
-# --- Stage 1: Build Frontend using Bun ---
+# Build Frontend using Bun
 FROM oven/bun:1-alpine AS frontend-builder
 WORKDIR /app
 # Copy only the files needed for dependency installation
@@ -12,7 +12,7 @@ COPY apps/web/ ./apps/web/
 WORKDIR /app/apps/web
 RUN bun run build
 
-# --- Stage 2: Final Runtime Environment ---
+# Final Runtime Environmenl
 FROM python:3.14.3-slim-bookworm
 
 # Install curl, netcat, build tools, supervisor, and Node.js 18
