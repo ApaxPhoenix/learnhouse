@@ -1,12 +1,12 @@
-import { ChartLine } from '@phosphor-icons/react'
+import { GraduationCap } from '@phosphor-icons/react'
 import type { SearchMeta } from '@/lib/dashboard-search/types'
 
 export const searchMeta: SearchMeta = {
-  id: 'dash.analytics',
-  titleKey: 'common.analytics',
-  descriptionKey: 'dashboard.search.entries.analytics.description',
-  keywordsKey: 'dashboard.search.entries.analytics.keywords',
-  icon: ChartLine,
-  href: '/dash/analytics',
-  group: 'analytics',
+  id: 'practice.practice',
+  titleKey: 'Practice',
+  descriptionKey: 'Manage standardized practice exam questionnaires',
+  keywordsKey: 'standardized, exams, tests, practice, quizzes, questions, forms, management, assessment, prep, evaluation, templates',
+  icon: GraduationCap,
+  href: '/dash/practice',
+  group: 'practice',
 }

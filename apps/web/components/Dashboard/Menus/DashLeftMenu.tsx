@@ -9,7 +9,7 @@ import {
   CurrencyCircleDollar,
   Buildings,
   Globe,
-  Question,
+  GraduationCap,
   Gear,
   SignOut,
   SidebarSimple,
@@ -17,11 +17,8 @@ import {
   CaretDown,
   PencilSimple,
   ChatsCircle,
-  Book,
-  ChatCircleDots,
   Headphones,
   ChartBar,
-  DotsThree,
   UsersThree,
   Shield,
   UserPlus,
@@ -31,9 +28,7 @@ import {
   Robot,
   LinkSimple,
   Key,
-  Lock,
   Wrench,
-  ChartLine,
   MagnifyingGlass,
   ChalkboardSimple,
   Cube,
@@ -157,7 +152,6 @@ function DashLeftMenu() {
 
 
   const plan = usePlan()
-  const mode = getDeploymentMode()
 
   if (!org || !session) return null
 
@@ -394,6 +388,13 @@ function DashLeftMenu() {
                 active={isActivePath('/dash/library')}
               />
             )}
+            <MenuLink
+                href="/dash/practice"
+                icon={<GraduationCap size={20} weight="fill" />}
+                label={"Practice"}
+                isCollapsed={isCollapsed}
+                active={isActivePath('/dash/practice')}
+            />
             {showCommunities && (
               <MenuLink
                 href="/dash/communities"
