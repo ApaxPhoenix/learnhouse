@@ -10,23 +10,22 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN bun run build
 
-FROM node:18-alpine AS runner
+FROM oven/bun:1-alpine AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
 
-# Create the user and group
-RUN addgroup --system --gid 1001 nodejs && \
-    adduser --system --uid 1001 nextjs
+RUN addgroup -S -g 1001 nodejs && \
+    adduser -S -u 1001 -G nodejs nextjs
 
-# Copy files from builder
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 COPY --from=builder --chown=nextjs:nodejs /app/public ./public
-COPY --from=builder --chown=nextjs:nodejs /app/docker-entrypoint.sh ./
 
+COPY --from=builder --chown=nextjs:nodejs /app/docker-entrypoint.sh ./
+COPY --from=builder --chown=nextjs:nodejs /app/server-wrapper.js ./
 
 RUN chown -R nextjs:nodejs /app && \
     chmod +x docker-entrypoint.sh && \

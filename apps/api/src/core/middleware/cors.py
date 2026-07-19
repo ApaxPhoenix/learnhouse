@@ -9,7 +9,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from config.config import get_learnhouse_config
 
 
-_SINGLE_TENANCY_LOCALHOST_REGEX = r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
+# FIX: Removed explicit 192.168.1.165, kept the wildcard for any 192.168.x.x local IP address
+_SINGLE_TENANCY_LOCALHOST_REGEX = r"^https?://(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+)(:\d+)?$"
 
 
 def _host_from(value: str) -> str:
@@ -50,7 +51,7 @@ def _single_tenancy_origin_regex(config) -> str:
         rf"(?:www\.)?{re.escape(h)}" for h in sorted(hosts)
     )
     return (
-        rf"^https?://(?:{host_alternation}|localhost|127\.0\.0\.1)(:\d+)?$"
+        rf"^https?://(?:{host_alternation}|localhost|127\.0\.0\.1|192\.168\.\d+\.\d+)(:\d+)?$"
     )
 
 

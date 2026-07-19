@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  learnhouse-api:
+    build: ./apps/api
+    ports:
+      - "127.0.0.1:9000:9000"
+
+  learnhouse:
+    build: ./apps/learnhouse
+    ports:
+      - "127.0.0.1:3000:4000"
+    depends_on:
+      learnhouse-api:
+        condition: service_healthy
+
+  payload:
+    build: ./apps/payload
+    ports:
+      - "127.0.0.1:3001:4000"
+    depends_on:
+      learnhouse-api:
+        condition: service_healthy
