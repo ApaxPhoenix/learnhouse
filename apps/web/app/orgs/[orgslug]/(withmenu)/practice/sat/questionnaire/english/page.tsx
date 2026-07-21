@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, Suspense } from 'react'
 import Link from 'next/link'
+import { useSearchParams, useRouter } from 'next/navigation'
 import {
     ArrowLeft,
     ArrowRight,
@@ -26,12 +27,22 @@ interface Question {
     explanation: string | LexicalRoot
     domain?: string
     topic?: string
+    section?: string
 }
 
 interface LexicalNode {
     type: string
     format?: number
     text?: string
+    url?: string
+    src?: string
+    alt?: string
+    width?: number | string
+    height?: number | string
+    alignment?: string
+    tag?: string
+    value?: any
+    fields?: any
     children?: LexicalNode[]
 }
 
@@ -39,6 +50,19 @@ interface LexicalRoot {
     root?: {
         children?: LexicalNode[]
     }
+}
+
+const PAYLOAD_URL = process.env.NEXT_PUBLIC_LEARNHOUSE_PAYLOAD_URL || "http://localhost:3001"
+
+const formatImageUrl = (url: string) => {
+    if (!url) return ''
+    if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:')) {
+        return url
+    }
+    if (url.startsWith('/')) {
+        return `${PAYLOAD_URL}${url}`
+    }
+    return `${PAYLOAD_URL}/${url}`
 }
 
 const renderMarkdownStyles = (text: string): React.ReactNode[] => {
@@ -80,7 +104,41 @@ const renderMarkdownStyles = (text: string): React.ReactNode[] => {
 
 const renderTextWithMarkdown = (text: string) => {
     if (!text) return null
-    return <React.Fragment>{renderMarkdownStyles(text)}</React.Fragment>
+
+    const imageRegex = /!\[(.*?)\]\((.*?)\)/g
+    const parts: React.ReactNode[] = []
+    let lastIndex = 0
+    let match: RegExpExecArray | null
+
+    while ((match = imageRegex.exec(text)) !== null) {
+        const [fullMatch, altText, rawUrl] = match
+        const matchIndex = match.index
+
+        if (matchIndex > lastIndex) {
+            const beforeText = text.substring(lastIndex, matchIndex)
+            parts.push(<React.Fragment key={`text-${lastIndex}`}>{renderMarkdownStyles(beforeText)}</React.Fragment>)
+        }
+
+        const imageUrl = formatImageUrl(rawUrl)
+        parts.push(
+            <div key={`img-${matchIndex}`} className="my-4 flex justify-center w-full">
+                <img
+                    src={imageUrl}
+                    alt={altText || 'Question Media'}
+                    className="max-w-full h-auto rounded-xl border border-slate-200/80 shadow-sm object-contain mx-auto block max-h-[500px]"
+                />
+            </div>
+        )
+
+        lastIndex = matchIndex + fullMatch.length
+    }
+
+    if (lastIndex < text.length) {
+        const remainingText = text.substring(lastIndex)
+        parts.push(<React.Fragment key={`text-${lastIndex}`}>{renderMarkdownStyles(remainingText)}</React.Fragment>)
+    }
+
+    return <>{parts}</>
 }
 
 const renderLexicalOrText = (content: string | LexicalRoot | null | undefined): React.ReactNode => {
@@ -93,13 +151,68 @@ const renderLexicalOrText = (content: string | LexicalRoot | null | undefined): 
         if (content.root?.children) {
             const renderNodes = (nodes: LexicalNode[]): React.ReactNode[] => {
                 return nodes.map((node, idx) => {
+                    if (node.type === 'upload' || node.type === 'image' || node.type === 'media') {
+                        const mediaObj = node.value || node.fields?.media || node.fields || {}
+                        const rawUrl = mediaObj.url || node.url || node.src || ''
+                        if (!rawUrl) return null
+
+                        const imageUrl = formatImageUrl(rawUrl)
+                        const altText = mediaObj.alt || node.alt || mediaObj.filename || 'Uploaded graphic'
+                        const customWidth = node.width || mediaObj.width || node.fields?.width
+                        const customHeight = node.height || mediaObj.height || node.fields?.height
+                        const alignment = node.fields?.alignment || node.alignment || 'center'
+
+                        const style: React.CSSProperties = {
+                            maxWidth: '100%',
+                            height: customHeight && !customWidth ? `${customHeight}px` : 'auto',
+                            width: customWidth ? (typeof customWidth === 'number' ? `${customWidth}px` : customWidth) : 'auto',
+                        }
+
+                        return (
+                            <div key={`media-${idx}`} className={`my-4 flex w-full ${alignment === 'left' ? 'justify-start' : alignment === 'right' ? 'justify-end' : 'justify-center'}`}>
+                                <img
+                                    src={imageUrl}
+                                    alt={altText}
+                                    style={style}
+                                    className="rounded-xl border border-slate-200/80 shadow-sm object-contain mx-auto block max-h-[500px]"
+                                />
+                            </div>
+                        )
+                    }
+
+                    if (node.type === 'block') {
+                        const blockFields = node.fields || {}
+                        const mediaObj = blockFields.media || blockFields.image || blockFields
+                        const rawUrl = mediaObj.url || blockFields.url
+                        if (rawUrl) {
+                            const imageUrl = formatImageUrl(rawUrl)
+                            const altText = mediaObj.alt || blockFields.alt || 'Media Block'
+                            const customWidth = blockFields.width || mediaObj.width
+                            return (
+                                <div key={`block-media-${idx}`} className="my-4 flex justify-center w-full">
+                                    <img
+                                        src={imageUrl}
+                                        alt={altText}
+                                        style={{
+                                            maxWidth: '100%',
+                                            height: 'auto',
+                                            width: customWidth ? `${customWidth}px` : 'auto'
+                                        }}
+                                        className="rounded-xl border border-slate-200/80 shadow-sm object-contain mx-auto block max-h-[500px]"
+                                    />
+                                </div>
+                            )
+                        }
+                    }
+
                     if (node.type === 'paragraph') {
                         return (
-                            <div key={idx} className="text-slate-700 leading-relaxed text-sm">
+                            <div key={idx} className="text-slate-700 leading-relaxed text-sm my-2">
                                 {node.children ? renderNodes(node.children) : null}
                             </div>
                         )
                     }
+
                     if (node.type === 'text') {
                         return (
                             <span key={idx} className={node.format === 1 ? "font-semibold text-slate-900" : ""}>
@@ -107,6 +220,7 @@ const renderLexicalOrText = (content: string | LexicalRoot | null | undefined): 
                             </span>
                         )
                     }
+
                     if (node.type === 'heading') {
                         return (
                             <h4 key={idx} className="text-base font-bold text-slate-900 mt-3 mb-1">
@@ -114,11 +228,13 @@ const renderLexicalOrText = (content: string | LexicalRoot | null | undefined): 
                             </h4>
                         )
                     }
+
                     if (node.type === 'list') {
-                        const tag = (node as any).tag === 'ol' ? 'ol' : 'ul';
-                        const className = tag === 'ol' ? 'list-decimal pl-5 space-y-1 text-slate-700 my-2' : 'list-disc pl-5 space-y-1 text-slate-700 my-2';
-                        return React.createElement(tag, { key: idx, className }, node.children ? renderNodes(node.children) : null);
+                        const tag = node.tag === 'ol' ? 'ol' : 'ul'
+                        const className = tag === 'ol' ? 'list-decimal pl-5 space-y-1 text-slate-700 my-2' : 'list-disc pl-5 space-y-1 text-slate-700 my-2'
+                        return React.createElement(tag, { key: idx, className }, node.children ? renderNodes(node.children) : null)
                     }
+
                     if (node.type === 'listitem') {
                         return (
                             <li key={idx} className="text-sm leading-relaxed">
@@ -126,12 +242,25 @@ const renderLexicalOrText = (content: string | LexicalRoot | null | undefined): 
                             </li>
                         )
                     }
+
+                    if (node.type === 'quote') {
+                        return (
+                            <blockquote key={idx} className="border-l-4 border-slate-300 pl-4 py-1 italic text-slate-600 my-2">
+                                {node.children ? renderNodes(node.children) : null}
+                            </blockquote>
+                        )
+                    }
+
+                    if (node.children && Array.isArray(node.children)) {
+                        return <React.Fragment key={idx}>{renderNodes(node.children)}</React.Fragment>
+                    }
+
                     return null
                 })
             }
 
             return (
-                <div className="space-y-4">
+                <div className="space-y-3">
                     {renderNodes(content.root.children)}
                 </div>
             )
@@ -144,6 +273,10 @@ const renderLexicalOrText = (content: string | LexicalRoot | null | undefined): 
 }
 
 function EnglishPracticeController() {
+    const searchParams = useSearchParams()
+    const router = useRouter()
+    const domainFilter = searchParams.get('domain') || undefined
+
     const [questions, setQuestions] = useState<Question[]>([])
     const [isLoading, setIsLoading] = useState(true)
     const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0)
@@ -156,8 +289,11 @@ function EnglishPracticeController() {
 
     useEffect(() => {
         async function loadDatasetAndProgress() {
+            setIsLoading(true)
             try {
-                const questionData = await getEnglishQuestionsAction()
+                const questionData = await getEnglishQuestionsAction(
+                    domainFilter ? { domain: domainFilter } : undefined
+                )
 
                 if (questionData.success && questionData.docs && questionData.docs.length > 0) {
                     const uniqueMap = new Map<string, any>()
@@ -172,12 +308,12 @@ function EnglishPracticeController() {
                         const alpha = ['A', 'B', 'C', 'D']
                         const seenTexts = new Set<string>()
                         const choices: Option[] = []
-                        const rawOptions = doc.options || []
+                        const rawOptions = doc.options || doc.choices || doc.answers || []
                         let addedIndex = 0
 
                         for (let i = 0; i < rawOptions.length; i++) {
                             const opt = rawOptions[i]
-                            const textVal = opt && typeof opt === 'object' ? String(opt.text || '') : String(opt)
+                            const textVal = opt && typeof opt === 'object' ? String(opt.text || opt.label || opt.value || '') : String(opt)
                             const cleanText = textVal.trim()
 
                             if (seenTexts.has(cleanText)) continue
@@ -204,17 +340,19 @@ function EnglishPracticeController() {
 
                         return {
                             id: String(doc.id),
-                            passage: doc.passage || doc.stimulus || null,
-                            prompt: doc.prompt || doc.question || "",
+                            passage: doc.passage || doc.stimulus || doc.context || null,
+                            prompt: doc.prompt || doc.question || doc.text || "",
                             options: choices,
-                            correct: String(doc.correct || doc.answer || '').trim().toUpperCase(),
-                            explanation: doc.explanation || "",
-                            domain: doc.domain || "Reading & Writing",
-                            topic: doc.topic || "General Practice"
+                            correct: String(doc.correct || doc.answer || doc.correctOption || doc.correctAnswer || '').trim().toUpperCase(),
+                            explanation: doc.explanation || doc.rationale || doc.solution || "",
+                            domain: doc.domain || doc.category || "Reading & Writing",
+                            topic: doc.topic || doc.subdomain || "General Practice",
+                            section: doc.section || doc.subject || "english"
                         }
                     })
 
                     setQuestions(allItems)
+                    setCurrentQuestionIndex(0)
 
                     const historyData = await getEnglishAnalyticsAction()
                     if (historyData.success && historyData.rows) {
@@ -224,6 +362,8 @@ function EnglishPracticeController() {
                         })
                         setSelectedAnswers(mappedHistory)
                     }
+                } else {
+                    setQuestions([])
                 }
             } catch (error) {
                 console.error(error)
@@ -233,7 +373,7 @@ function EnglishPracticeController() {
         }
 
         loadDatasetAndProgress()
-    }, [])
+    }, [domainFilter])
 
     const currentQuestion = questions[currentQuestionIndex]
     const userChoice = currentQuestion ? selectedAnswers[currentQuestion.id] : undefined
@@ -258,7 +398,8 @@ function EnglishPracticeController() {
             const res = await submitEnglishAttemptAction({
                 questionId: questionId,
                 selectedOptionKey: formattedKey,
-                isCorrect: isCorrect
+                isCorrect: isCorrect,
+                section: currentQuestion.section || 'english'
             })
             if (!res.success) {
                 console.error("Server verification denied choice record:", res.error)
@@ -311,12 +452,25 @@ function EnglishPracticeController() {
                     <div className="space-y-2">
                         <h3 className="text-md font-bold text-slate-900">No Questions Found</h3>
                         <p className="text-sm text-slate-500 leading-relaxed">
-                            We couldn't locate active reading and writing questions in your database library right now.
+                            {domainFilter
+                                ? `We couldn't locate active questions matching domain "${domainFilter}".`
+                                : "We couldn't locate active reading and writing questions in your database library right now."
+                            }
                         </p>
                     </div>
-                    <Link href="/practice" className="inline-block text-sm font-medium text-slate-400 hover:text-slate-600 transition-colors mt-2">
-                        Return to Dashboard
-                    </Link>
+                    <div className="flex justify-center gap-3">
+                        {domainFilter && (
+                            <button
+                                onClick={() => router.push('/practice/sat/questionnaire/english')}
+                                className="inline-block text-xs font-semibold bg-slate-900 text-white px-4 py-2 rounded-xl hover:bg-slate-800 transition-colors"
+                            >
+                                View All Questions
+                            </button>
+                        )}
+                        <Link href="/practice/sat" className="inline-block text-xs font-semibold text-slate-500 border border-slate-200 px-4 py-2 rounded-xl hover:bg-slate-100 transition-colors">
+                            Return to Dashboard
+                        </Link>
+                    </div>
                 </div>
             </div>
         )
@@ -389,10 +543,23 @@ function EnglishPracticeController() {
                     <span className="text-sm font-bold tracking-wide text-slate-800 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-100 hidden sm:inline-block">
                         Question <span className="font-mono">{currentQuestionIndex + 1}</span> of <span className="font-mono">{questions.length}</span>
                     </span>
+
+                    {domainFilter && (
+                        <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 text-blue-700 px-3 py-1.5 rounded-xl text-xs font-semibold">
+                            <span>Targeted Domain: <strong className="capitalize">{domainFilter}</strong></span>
+                            <button
+                                onClick={() => router.push('/practice/sat/questionnaire/english')}
+                                className="ml-1 text-blue-500 hover:text-blue-800 font-bold"
+                                title="Clear Domain Filter"
+                            >
+                                <XCircle size={14} weight="bold" />
+                            </button>
+                        </div>
+                    )}
                 </div>
 
                 <div className="flex items-center gap-4">
-                    <Link href="/practice" className="px-3 py-1.5 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-600 hover:border-slate-300 transition-all">
+                    <Link href="/practice/sat" className="px-3 py-1.5 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-600 hover:border-slate-300 transition-all">
                         Exit Practice
                     </Link>
                 </div>
@@ -400,7 +567,6 @@ function EnglishPracticeController() {
 
             <main className="flex-1 min-h-0 overflow-hidden flex flex-col md:flex-row bg-[#fdfdfd] p-4 gap-4">
 
-                {/* Left Panel: Passages and Prompt Contexts */}
                 <div className="flex-1 min-h-0 overflow-y-auto p-6 bg-white rounded-2xl border border-slate-200/70 shadow-sm flex flex-col">
                     <div className="text-sm font-bold text-slate-400 capitalize tracking-widest border-b border-slate-100 pb-2 mb-4 shrink-0">
                         {currentQuestion.domain} &bull; {currentQuestion.topic}
@@ -435,7 +601,6 @@ function EnglishPracticeController() {
                     )}
                 </div>
 
-                {/* Right Panel: Clean Verified Options Grid Layout */}
                 <div className="flex-1 min-h-0 overflow-y-auto p-6 bg-white rounded-2xl border border-slate-200/70 shadow-sm flex flex-col justify-between">
                     <div className="space-y-5 w-full">
                         <div className="flex items-center justify-between border-b border-slate-100 pb-2">
@@ -535,7 +700,11 @@ function EnglishPracticeController() {
 
 export default function EnglishPracticePage() {
     return (
-        <Suspense fallback={null}>
+        <Suspense fallback={
+            <div className="h-screen w-screen flex items-center justify-center text-sm font-semibold tracking-widest text-slate-500 bg-slate-50">
+                <div className="w-8 h-8 border-3 border-slate-900 border-t-transparent rounded-full animate-spin"></div>
+            </div>
+        }>
             <EnglishPracticeController />
         </Suspense>
     )

@@ -10,7 +10,6 @@ import {
     CheckCircle,
     Clock,
     PlusCircle,
-    ChartBar,
     Calendar,
     TrendUp,
     Trash,
@@ -30,12 +29,12 @@ function getLevelStyles(percentage: number) {
 
 function getProficiencyTier(percentage: number) {
     if (percentage < 60) {
-        return { label: 'Below Minimum', badgeStyle: 'bg-red-50 text-red-600 border border-red-200' }
+        return { label: 'Below Minimum', badgeStyle: 'bg-red-50 text-red-600 border border-red-200/60' }
     }
     if (percentage >= 60 && percentage < 85) {
-        return { label: 'Proficient', badgeStyle: 'bg-amber-50 text-amber-600 border border-amber-200' }
+        return { label: 'Proficient', badgeStyle: 'bg-amber-50 text-amber-600 border border-amber-200/60' }
     }
-    return { label: 'Outstanding', badgeStyle: 'bg-emerald-50 text-emerald-600 border border-emerald-200' }
+    return { label: 'Outstanding', badgeStyle: 'bg-emerald-50 text-emerald-600 border border-emerald-200/60' }
 }
 
 export default function SatOverviewDashboard() {
@@ -89,7 +88,7 @@ export default function SatOverviewDashboard() {
                         icon: BookOpen,
                         iconColor: 'text-blue-500',
                         iconBg: 'bg-blue-50 border border-blue-100',
-                        href: '/practice/sat/english',
+                        href: '/practice/sat/questionnaire/english',
                     },
                     {
                         label: 'Math Section',
@@ -98,7 +97,7 @@ export default function SatOverviewDashboard() {
                         icon: Chalkboard,
                         iconColor: 'text-indigo-500',
                         iconBg: 'bg-indigo-50 border border-indigo-100',
-                        href: '/practice/sat/math',
+                        href: '/practice/sat/questionnaire/math',
                     },
                     {
                         label: 'Total Diagnostic Attempt Profile',
@@ -180,19 +179,27 @@ export default function SatOverviewDashboard() {
                         </div>
                         <div className="flex items-center gap-2 flex-wrap">
                             <Link
-                                href="/practice/sat/test?new=true"
+                                href="/practice/sat/questionnaire/english"
                                 className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium text-white bg-gray-900 rounded-lg hover:bg-gray-800 transition-colors"
                             >
                                 <PlusCircle size={18} weight="bold" />
-                                Start New Practice Test
+                                Start Questionnaire
                             </Link>
 
                             <Link
-                                href="/practice/sat/analytics"
-                                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium text-gray-600 bg-white rounded-lg nice-shadow hover:bg-gray-50 transition-colors"
+                                href="/practice/sat/questionnaire/english"
+                                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium text-gray-600 bg-white rounded-lg nice-shadow hover:bg-blue-50 hover:text-blue-600 transition-colors"
                             >
-                                <ChartBar size={18} weight="bold" />
-                                Detailed Score Analytics
+                                <BookOpen size={18} weight="bold" />
+                                English Questionnaire
+                            </Link>
+
+                            <Link
+                                href="/practice/sat/questionnaire/math"
+                                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium text-gray-600 bg-white rounded-lg nice-shadow hover:bg-indigo-50 hover:text-indigo-600 transition-colors"
+                            >
+                                <Chalkboard size={18} weight="bold" />
+                                Math Questionnaire
                             </Link>
 
                             <button
@@ -280,12 +287,12 @@ function ScoreProgressBarHero({
                         </div>
 
                         {currentScore < targetScore ? (
-                            <div className="flex items-center gap-1.5 text-xs font-medium text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-full">
+                            <div className="flex items-center gap-1.5 text-xs font-semibold text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-md border border-emerald-100">
                                 <TrendUp size={14} weight="bold" />
                                 <span>{targetScore - currentScore} points to goal reach</span>
                             </div>
                         ) : (
-                            <div className="flex items-center gap-1.5 text-xs font-medium text-purple-600 bg-purple-50 px-2.5 py-1 rounded-full">
+                            <div className="flex items-center gap-1.5 text-xs font-semibold text-purple-600 bg-purple-50 px-2.5 py-1 rounded-md border border-purple-100">
                                 <CheckCircle size={14} weight="bold" />
                                 <span>Target achieved or surpassed!</span>
                             </div>
@@ -396,7 +403,7 @@ function RecentPracticeTests({ tests, isLoading }: { tests: any[], isLoading: bo
                 ) : (
                     tests.map((test) => (
                         <div key={test.id} className="flex items-center gap-3 px-6 py-3.5 hover:bg-gray-50 transition-colors group">
-                            <div className="w-9 h-9 rounded-md bg-green-50 border border-green-150 shrink-0 flex items-center justify-center">
+                            <div className="w-9 h-9 rounded-md bg-green-50 border border-green-100 shrink-0 flex items-center justify-center">
                                 <CheckCircle size={18} weight="duotone" className="text-green-500" />
                             </div>
                             <div className="flex-1 min-w-0">
@@ -466,37 +473,123 @@ function SubscoreMeters({ categories, isLoading }: { categories: any[], isLoadin
 }
 
 function WeaknessDiagnosticList({ blindspots, isLoading }: { blindspots: any[], isLoading: boolean }) {
+    const [selectedTab, setSelectedTab] = useState<'All' | 'English' | 'Math'>('All')
+
+    const aggregatedDomains = React.useMemo(() => {
+        const domainMap = new Map<string, {
+            id: string
+            subject: string
+            concept: string
+            count: number
+            targetPath: string
+            type: string
+            style: string
+        }>()
+
+        blindspots.forEach((spot) => {
+            const subject = spot.subject || 'General'
+            const concept = spot.concept || 'Core Concept'
+            const key = `${subject.toLowerCase()}-${concept.toLowerCase()}`
+
+            if (domainMap.has(key)) {
+                const existing = domainMap.get(key)!
+                existing.count += 1
+            } else {
+                domainMap.set(key, {
+                    id: key,
+                    subject,
+                    concept,
+                    count: 1,
+                    targetPath: spot.targetPath || `/practice/sat/questionnaire/${subject.toLowerCase().includes('math') ? 'math' : 'english'}?concept=${encodeURIComponent(concept)}`,
+                    type: spot.type || 'Focus Area',
+                    style: spot.style || 'bg-amber-50 text-amber-700 border border-amber-200/60'
+                })
+            }
+        })
+
+        return Array.from(domainMap.values())
+    }, [blindspots])
+
+    const filteredDomains = React.useMemo(() => {
+        if (selectedTab === 'All') return aggregatedDomains
+        return aggregatedDomains.filter((d) => {
+            const subj = d.subject.toLowerCase()
+            if (selectedTab === 'English') {
+                return subj.includes('english') || subj.includes('reading') || subj.includes('writing')
+            }
+            if (selectedTab === 'Math') {
+                return subj.includes('math') || subj.includes('quant') || subj.includes('algebra')
+            }
+            return true
+        })
+    }, [aggregatedDomains, selectedTab])
+
     if (isLoading) return <div className="h-40 w-full bg-slate-100 rounded-xl animate-pulse" />
 
     return (
         <div className="bg-white rounded-xl nice-shadow overflow-hidden">
-            <div className="flex items-center justify-between px-6 pt-6 pb-3">
-                <h3 className="text-md font-semibold text-gray-700">Target Focus Recommendations (Incorrect Questions)</h3>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between px-6 pt-6 pb-3 gap-3 border-b border-gray-100">
+                <div>
+                    <h3 className="text-md font-semibold text-gray-700">Target Focus Recommendations</h3>
+                    <p className="text-xs text-gray-400 mt-0.5">Categorized domain areas needing targeted practice</p>
+                </div>
+
+                <div className="flex items-center gap-1 bg-gray-100 p-1 rounded-md self-start sm:self-auto">
+                    {(['All', 'English', 'Math'] as const).map((tab) => (
+                        <button
+                            key={tab}
+                            onClick={() => setSelectedTab(tab)}
+                            className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors ${
+                                selectedTab === tab
+                                    ? 'bg-white text-gray-900 shadow-sm'
+                                    : 'text-gray-500 hover:text-gray-800'
+                            }`}
+                        >
+                            {tab}
+                        </button>
+                    ))}
+                </div>
             </div>
+
             <div className="divide-y divide-gray-50">
-                {blindspots.length === 0 ? (
+                {filteredDomains.length === 0 ? (
                     <div className="p-6 text-center text-sm text-gray-400">
-                        Excellent performance context! Zero active incorrect items to review.
+                        {blindspots.length === 0
+                            ? "Excellent performance context! Zero active weakness areas to review."
+                            : `No active focus areas found under the "${selectedTab}" domain filter.`}
                     </div>
                 ) : (
-                    blindspots.map((item, idx) => (
+                    filteredDomains.map((domain) => (
                         <Link
-                            key={idx}
-                            href={item.targetPath}
-                            className="flex items-center gap-3 px-6 py-3.5 hover:bg-slate-50 transition-colors group cursor-pointer"
+                            key={domain.id}
+                            href={domain.targetPath}
+                            className="flex items-center justify-between gap-3 px-6 py-4 hover:bg-slate-50 transition-colors group cursor-pointer"
                         >
-                            <div className="w-1.5 h-1.5 rounded-full bg-red-400 shrink-0" />
-                            <div className="flex-1 min-w-0">
-                                <p className="text-sm font-medium text-gray-700 truncate group-hover:text-slate-950">
-                                    {item.concept}
-                                </p>
-                                <p className="text-xs text-gray-400 mt-0.5">
-                                    {item.subject} &bull; Click to isolate and re-attempt this specific question type
-                                </p>
+                            <div className="flex items-start gap-3 min-w-0">
+                                <div className="w-2 h-2 rounded-full bg-red-400 shrink-0 mt-1.5" />
+                                <div className="min-w-0">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                        <p className="text-sm font-semibold text-gray-800 truncate group-hover:text-blue-600 transition-colors">
+                                            {domain.concept}
+                                        </p>
+                                        <span className="text-[10px] uppercase font-semibold tracking-wider px-2 py-0.5 bg-gray-100 text-gray-600 rounded-md">
+                                            {domain.subject}
+                                        </span>
+                                    </div>
+                                    <p className="text-xs text-gray-400 mt-1">
+                                        Click to enter target practice mode for this domain
+                                    </p>
+                                </div>
                             </div>
-                            <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${item.style} shrink-0`}>
-                                {item.type}
-                            </span>
+
+                            <div className="flex items-center gap-3 shrink-0">
+                                <span className="text-xs font-semibold bg-red-50 text-red-600 border border-red-200/60 px-2.5 py-1 rounded-md">
+                                    {domain.count} {domain.count === 1 ? 'Missed Question' : 'Missed Questions'}
+                                </span>
+                                <span className={`hidden sm:inline-block text-xs font-semibold px-2.5 py-1 rounded-md ${domain.style}`}>
+                                    {domain.type}
+                                </span>
+                            </div>
                         </Link>
                     ))
                 )}

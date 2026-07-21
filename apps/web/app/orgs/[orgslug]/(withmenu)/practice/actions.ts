@@ -112,15 +112,15 @@ export async function getSatDashboardDataAction() {
             const isEnglish = row.section === 'english'
             return {
                 id: row.question_id,
-                concept: `Review Missed Question #${row.question_id}`,
+                concept: `Targeted Practice Concept #${row.question_id}`,
                 subject: isEnglish ? 'Reading & Writing' : 'Math',
                 type: idx === 0 ? 'High Priority' : idx < 3 ? 'Medium Priority' : 'Low Priority',
                 style: idx === 0
-                    ? 'border border-red-200 text-red-500 bg-red-50'
+                    ? 'border border-red-200/60 text-red-600 bg-red-50'
                     : idx < 3
-                        ? 'border border-amber-200 text-amber-500 bg-amber-50'
-                        : 'border border-green-200 text-green-500 bg-green-50',
-                targetPath: `/practice/sat/questionnaire/${row.section}?questionId=${row.question_id}`
+                        ? 'border border-amber-200/60 text-amber-600 bg-amber-50'
+                        : 'border border-emerald-200/60 text-emerald-600 bg-emerald-50',
+                targetPath: `/practice/sat/questionnaire/${row.section}?concept=Concept_${row.question_id}`
             }
         })
 

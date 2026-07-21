@@ -1,6 +1,6 @@
 "use server"
 
-import { cookies, headers } from "next/headers"
+import { headers } from "next/headers"
 import { Pool } from "pg"
 
 const pool = new Pool({
@@ -12,34 +12,26 @@ async function getUserIdFromSession(): Promise<string | null> {
     const backendUrl = process.env.NEXT_PUBLIC_LEARNHOUSE_BACKEND_URL || "http://localhost:9000"
 
     try {
-        const cookieStore = await cookies()
-        const headersList = await headers()
+        const incomingHeaders = await headers()
+        const cookieHeader = incomingHeaders.get("cookie")
+        const authHeader = incomingHeaders.get("Authorization") || incomingHeaders.get("authorization")
 
-        let token: string | null = null
+        const requestHeaders: Record<string, string> = {}
+        if (cookieHeader) requestHeaders["cookie"] = cookieHeader
+        if (authHeader) requestHeaders["Authorization"] = authHeader
 
-        const authHeader = headersList.get("Authorization") || headersList.get("authorization")
-        if (authHeader && authHeader.toLowerCase().startsWith("bearer ")) {
-            token = authHeader.substring(7).trim()
+        if (!cookieHeader && !authHeader) {
+            return null
         }
-
-        if (!token) {
-            const possibleCookies = ["access_token_cookie", "token", "next-auth.session-token", "__Secure-next-auth.session-token"]
-            for (const name of possibleCookies) {
-                const cookieVal = cookieStore.get(name)?.value
-                if (cookieVal && cookieVal !== "undefined" && cookieVal !== "null") {
-                    token = cookieVal
-                    break
-                }
-            }
-        }
-
-        if (!token) return null
 
         const sessionResponse = await fetch(`${backendUrl}/api/v1/users/session`, {
-            headers: { Authorization: `Bearer ${token}` },
+            headers: requestHeaders,
+            cache: "no-store",
         })
 
-        if (!sessionResponse.ok) return null
+        if (!sessionResponse.ok) {
+            return null
+        }
 
         const session = await sessionResponse.json()
         return session.id ?? session.user?.id ?? null

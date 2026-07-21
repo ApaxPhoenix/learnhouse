@@ -78,38 +78,71 @@ const checkIsCorrect = (q: Question, selectedKey: string | undefined): boolean =
 const renderMarkdownStyles = (text: string): React.ReactNode[] => {
     if (!text) return []
 
-    const boldParts = text.split(/(\*\*|__)/g)
-    let isBold = false
-    let elementKey = 0
+    const imageRegex = /!\[(.*?)\]\((.*?)\)|<img\s+[^>]*src=["']([^"']+)["'][^>]*\/>/g
+    const parts: any[] = []
+    let lastIndex = 0
+    let match: RegExpExecArray | null
 
-    const boldMapped = boldParts.flatMap((part) => {
-        if (part === '**' || part === '__') {
-            isBold = !isBold
-            return []
+    while ((match = imageRegex.exec(text)) !== null) {
+        if (match.index > lastIndex) {
+            parts.push(text.substring(lastIndex, match.index))
         }
 
-        const italicParts = part.split(/(\*|_)/g)
-        let isItalic = false
+        const alt = match[1] || 'Stimulus image'
+        const src = match[2] || match[3]
 
-        return italicParts.map((subPart) => {
-            if (subPart === '*' || subPart === '_') {
-                isItalic = !isItalic
-                return null
+        if (src) {
+            parts.push(
+                <span key={`img-${match.index}`} className="my-3 flex justify-center w-full">
+                    <img
+                        src={src}
+                        alt={alt}
+                        className="max-w-full h-auto rounded-xl border border-slate-200/80 shadow-sm"
+                    />
+                </span>
+            )
+        }
+        lastIndex = imageRegex.lastIndex
+    }
+
+    if (lastIndex < text.length) {
+        parts.push(text.substring(lastIndex))
+    }
+
+    let elementKey = 0
+    return parts.flatMap((part) => {
+        if (typeof part !== 'string') return [part]
+
+        const boldParts = part.split(/(\*\*|__)/g)
+        let isBold = false
+
+        return boldParts.flatMap((bPart) => {
+            if (bPart === '**' || bPart === '__') {
+                isBold = !isBold
+                return []
             }
-            if (!subPart) return null
 
-            elementKey++
-            let className = ""
-            if (isBold) className += " font-bold text-slate-900"
-            if (isItalic) className += " italic"
+            const italicParts = bPart.split(/(\*|_)/g)
+            let isItalic = false
 
-            return className ? (
-                <span key={`md-span-${elementKey}`} className={className}>{subPart}</span>
-            ) : subPart
-        }).filter(Boolean)
-    })
+            return italicParts.map((subPart) => {
+                if (subPart === '*' || subPart === '_') {
+                    isItalic = !isItalic
+                    return null
+                }
+                if (!subPart) return null
 
-    return boldMapped as React.ReactNode[]
+                elementKey++
+                let className = ""
+                if (isBold) className += " font-bold text-slate-900"
+                if (isItalic) className += " italic"
+
+                return className ? (
+                    <span key={`md-span-${elementKey}`} className={className}>{subPart}</span>
+                ) : subPart
+            }).filter(Boolean)
+        })
+    }) as React.ReactNode[]
 }
 
 const sanitizeAndExtractLaTeX = (text: string) => {
@@ -120,7 +153,7 @@ const sanitizeAndExtractLaTeX = (text: string) => {
     cleaned = cleaned.replace(/\\\\\]/g, '\\]')
     cleaned = cleaned.replace(/\\\\\(/g, '\\(')
     cleaned = cleaned.replace(/\\\\\)/g, '\\)')
-    cleaned = cleaned.replace(/−44\s*4\s*−4\s*\\/g, '\\frac{-4}{4}')
+    cleaned = cleaned.replace(/−/g, '-') // Normalize unicode minus signs
 
     cleaned = cleaned.replace(/(?<!\/)\b(\d+)\/(\d+)\b(?!\/)\s*(=\s*\d*)?/g, (match, p1, p2, p3) => {
         if (p3) {
@@ -278,6 +311,41 @@ const renderLexicalOrText = (content: string | LexicalRoot | null | undefined): 
                             </li>
                         )
                     }
+                    if (node.type === 'upload' || node.type === 'image') {
+                        const rawSrc = (node as any).value?.url || (node as any).src || (node as any).url
+                        const alt = (node as any).value?.alt || (node as any).altText || (node as any).alt || 'Stimulus image'
+                        if (rawSrc) {
+                            return (
+                                <div key={idx} className="my-4 flex justify-center">
+                                    <img
+                                        src={rawSrc}
+                                        alt={alt}
+                                        className="max-w-full h-auto rounded-xl border border-slate-200/80 shadow-sm"
+                                    />
+                                </div>
+                            )
+                        }
+                    }
+                    if (node.type === 'block') {
+                        const fields = (node as any).fields
+                        const blockType = fields?.blockType
+                        if (blockType === 'mediaBlock' || blockType === 'image' || fields?.media) {
+                            const media = fields?.media || fields?.image
+                            const rawSrc = media?.url || media?.src
+                            const alt = media?.alt || 'Stimulus image'
+                            if (rawSrc) {
+                                return (
+                                    <div key={idx} className="my-4 flex justify-center">
+                                        <img
+                                            src={rawSrc}
+                                            alt={alt}
+                                            className="max-w-full h-auto rounded-xl border border-slate-200/80 shadow-sm"
+                                        />
+                                    </div>
+                                )
+                            }
+                        }
+                    }
                     if (node.type === 'equation' || node.type === 'inline-equation') {
                         const mathStr = (node as any).equation || (node as any).value || '';
                         const isInline = (node as any).inline !== false;
@@ -321,7 +389,7 @@ function MathPracticeController() {
 
     const [isDesmosOpen, setIsDesmosOpen] = useState(false)
     const [isDesmosMinimized, setIsDesmosMinimized] = useState(false)
-    const [desmosPosition, setDesmosPosition] = useState({ x: 160, y: 120 })
+    const [desmosPosition, setDesmosPosition] = useState({ x: 120, y: 80 })
     const [desmosSize, setDesmosSize] = useState({ width: 540, height: 460 })
     const [isDragging, setIsDragging] = useState(false)
     const [isResizing, setIsResizing] = useState(false)
@@ -374,7 +442,7 @@ function MathPracticeController() {
                             choices.push({
                                 id: `fallback-${fallbackLabel}-${doc.id}`,
                                 key: fallbackLabel,
-                                text: `Optional Parameter ${fallbackLabel}`
+                                text: `Option ${fallbackLabel}`
                             })
                         }
 
@@ -417,16 +485,15 @@ function MathPracticeController() {
     useEffect(() => {
         const handleMouseMove = (event: MouseEvent) => {
             if (isDragging) {
-                setDesmosPosition({
-                    x: event.clientX - dragStart.current.x,
-                    y: event.clientY - dragStart.current.y
-                })
+                const newX = Math.max(10, Math.min(window.innerWidth - 300, event.clientX - dragStart.current.x))
+                const newY = Math.max(10, Math.min(window.innerHeight - 100, event.clientY - dragStart.current.y))
+                setDesmosPosition({ x: newX, y: newY })
             } else if (isResizing && !isDesmosMinimized) {
                 const deltaX = event.clientX - resizeStart.current.x
                 const deltaY = event.clientY - resizeStart.current.y
                 setDesmosSize({
-                    width: Math.max(400, resizeStart.current.width + deltaX),
-                    height: Math.max(300, resizeStart.current.height + deltaY)
+                    width: Math.max(380, resizeStart.current.width + deltaX),
+                    height: Math.max(280, resizeStart.current.height + deltaY)
                 })
             }
         }
@@ -537,6 +604,7 @@ function MathPracticeController() {
             <div className="h-screen w-screen flex items-center justify-center text-sm font-semibold tracking-widest text-slate-500 bg-slate-50">
                 <div className="flex flex-col items-center gap-4 mx-auto">
                     <div className="w-8 h-8 border-3 border-slate-900 border-t-transparent rounded-full animate-spin"></div>
+                    <span>Loading Math Dataset...</span>
                 </div>
             </div>
         )
@@ -547,12 +615,12 @@ function MathPracticeController() {
             <div className="h-screen w-screen bg-slate-50 flex flex-col items-center justify-center p-6 text-center text-slate-900">
                 <div className="max-w-md bg-white rounded-2xl border border-slate-200/80 p-8 space-y-5 mx-auto shadow-sm">
                     <div className="space-y-2">
-                        <h3 className="text-md font-bold text-slate-900">No Questions Found</h3>
+                        <h3 className="text-md font-bold text-slate-900">No Math Questions Found</h3>
                         <p className="text-sm text-slate-500 leading-relaxed">
                             We couldn't locate active math questions in your database library right now.
                         </p>
                     </div>
-                    <Link href="/practice" className="inline-block text-sm font-medium text-slate-400 hover:text-slate-600 transition-colors mt-2">
+                    <Link href="/practice" className="inline-block text-sm font-medium text-slate-600 hover:text-slate-900 transition-colors mt-2">
                         Return to Dashboard
                     </Link>
                 </div>
@@ -574,23 +642,23 @@ function MathPracticeController() {
                         height: isDesmosMinimized ? '42px' : `${desmosSize.height}px`,
                         zIndex: 40,
                     }}
-                    className="bg-white border border-slate-300 flex flex-col select-none rounded-2xl shadow-xl overflow-hidden"
+                    className="bg-white border border-slate-300 flex flex-col select-none rounded-2xl shadow-2xl overflow-hidden"
                     onMouseDown={handleMouseDown}
                 >
                     <div className="drag-handle bg-slate-900 text-white px-4 py-3 flex items-center justify-between cursor-move text-sm font-bold tracking-wide border-b border-slate-800">
                         <span className="flex items-center gap-1.5 tracking-wider text-sm text-slate-300">
-                            <Calculator size={14} weight="bold" /> Desmos
+                            <Calculator size={16} weight="bold" /> Digital SAT Desmos Calculator
                         </span>
                         <div className="flex items-center gap-2">
                             <button
                                 onClick={(e) => { e.stopPropagation(); setIsDesmosMinimized(!isDesmosMinimized); }}
-                                className="hover:text-slate-300 p-0.5 cursor-pointer bg-slate-800 rounded-md animate-none"
+                                className="hover:text-slate-300 p-1 cursor-pointer bg-slate-800 rounded-md"
                             >
                                 <Minus size={12} weight="bold" />
                             </button>
                             <button
                                 onClick={(e) => { e.stopPropagation(); setIsDesmosOpen(false); }}
-                                className="hover:text-rose-400 p-0.5 cursor-pointer bg-slate-800 rounded-md animate-none"
+                                className="hover:text-rose-400 p-1 cursor-pointer bg-slate-800 rounded-md"
                             >
                                 <XCircle size={12} weight="bold" />
                             </button>
@@ -606,7 +674,7 @@ function MathPracticeController() {
                             />
                             <div
                                 onMouseDown={handleResizeMouseDown}
-                                className="absolute bottom-0 right-0 w-5 h-5 cursor-se-resize bg-slate-100 flex items-center justify-center border-t border-l border-slate-200 rounded-tl-md"
+                                className="absolute bottom-0 right-0 w-6 h-6 cursor-se-resize bg-slate-100 flex items-center justify-center border-t border-l border-slate-200 rounded-tl-md"
                             >
                                 <HandGrabbing size={12} className="text-slate-500" />
                             </div>
@@ -620,14 +688,14 @@ function MathPracticeController() {
                     <div className="bg-white border border-slate-200 w-full max-w-xl rounded-2xl shadow-xl flex flex-col overflow-hidden max-h-[80vh] animate-fade-in">
                         <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/60">
                             <div>
-                                <h3 className="text-sm font-bold text-slate-900">Question Practice Menu</h3>
-                                <p className="text-sm font-medium text-slate-400 tracking-wide mt-0.5">Quick Question Selection</p>
+                                <h3 className="text-sm font-bold text-slate-900">Math Question Navigator</h3>
+                                <p className="text-xs font-medium text-slate-400 tracking-wide mt-0.5">Jump directly to any question</p>
                             </div>
                             <button
                                 onClick={() => setIsMenuOpen(false)}
-                                className="text-sm font-bold text-slate-400 hover:text-slate-600 border border-slate-200 px-2.5 py-1 rounded-xl bg-white transition-all cursor-pointer"
+                                className="text-xs font-bold text-slate-500 hover:text-slate-800 border border-slate-200 px-3 py-1.5 rounded-xl bg-white transition-all cursor-pointer"
                             >
-                                Close Menu
+                                Close
                             </button>
                         </div>
                         <div className="p-6 overflow-y-auto grid grid-cols-4 sm:grid-cols-5 gap-3">
@@ -635,10 +703,10 @@ function MathPracticeController() {
                                 const chosenKey = selectedAnswers[q.id]
                                 const isCurrent = currentQuestionIndex === idx
 
-                                let selectionStyle = "bg-white border-slate-200 text-slate-400 hover:border-slate-400 hover:text-slate-700"
+                                let selectionStyle = "bg-white border-slate-200 text-slate-500 hover:border-slate-400 hover:text-slate-800"
 
                                 if (isCurrent) {
-                                    selectionStyle = "bg-slate-900 border-slate-900 text-white ring-2 ring-slate-900/20"
+                                    selectionStyle = "bg-slate-900 border-slate-900 text-white ring-2 ring-slate-900/20 font-bold"
                                 } else if (chosenKey) {
                                     const isCorrect = checkIsCorrect(q, chosenKey)
                                     if (isCorrect) {
@@ -655,7 +723,7 @@ function MathPracticeController() {
                                             setCurrentQuestionIndex(idx)
                                             setIsMenuOpen(false)
                                         }}
-                                        className={`p-3 border rounded-xl font-mono text-sm font-bold transition-all flex flex-col items-center justify-center gap-1 cursor-pointer ${selectionStyle}`}
+                                        className={`p-3 border rounded-xl font-mono text-sm transition-all flex flex-col items-center justify-center gap-1 cursor-pointer ${selectionStyle}`}
                                     >
                                         <span>{idx + 1}</span>
                                     </button>
@@ -672,7 +740,7 @@ function MathPracticeController() {
                         onClick={() => setIsMenuOpen(true)}
                         className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-slate-50 text-sm font-bold text-slate-700 border border-slate-200 rounded-xl hover:border-slate-300 transition-all cursor-pointer"
                     >
-                        <ListChecks size={15} weight="bold" />
+                        <ListChecks size={16} weight="bold" />
                         <span>Question Selection</span>
                     </button>
 
@@ -684,13 +752,13 @@ function MathPracticeController() {
                         onClick={() => setIsDesmosOpen(!isDesmosOpen)}
                         className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-bold border transition-all cursor-pointer ${isDesmosOpen ? 'bg-slate-900 border-slate-900 text-white shadow-sm' : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50 hover:border-slate-300'}`}
                     >
-                        <Calculator size={14} weight="bold" />
-                        <span>Graphing Calculation</span>
+                        <Calculator size={15} weight="bold" />
+                        <span>Calculator</span>
                     </button>
                 </div>
 
                 <div className="flex items-center gap-4">
-                    <Link href="/practice" className="px-3 py-1.5 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-600 hover:border-slate-300 transition-all">
+                    <Link href="/practice" className="px-3 py-1.5 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-600 hover:border-slate-300 transition-all">
                         Exit Practice
                     </Link>
                 </div>
@@ -699,7 +767,7 @@ function MathPracticeController() {
             <main className="flex-1 min-h-0 overflow-hidden flex flex-col md:flex-row bg-[#fdfdfd] p-4 gap-4">
 
                 <div className="flex-1 min-h-0 overflow-y-auto p-6 bg-white rounded-2xl border border-slate-200/70 shadow-sm flex flex-col">
-                    <div className="text-sm font-bold text-slate-400 capitalize tracking-widest border-b border-slate-100 pb-2 mb-4 shrink-0">
+                    <div className="text-xs font-bold text-slate-400 uppercase tracking-wider border-b border-slate-100 pb-2 mb-4 shrink-0">
                         {currentQuestion.domain} &bull; {currentQuestion.topic}
                     </div>
 
@@ -709,11 +777,11 @@ function MathPracticeController() {
 
                     {userChoice && (
                         <div className="mt-auto p-5 bg-slate-50/80 border border-slate-200/80 rounded-2xl space-y-2 animate-fade-in">
-                            <div className="text-sm text-slate-500 font-medium">
-                                Target Solution Key: <span className="font-extrabold text-slate-700 font-mono">{currentQuestion.answer}</span>
+                            <div className="text-xs text-slate-500 font-medium">
+                                Target Solution Key: <span className="font-extrabold text-slate-800 font-mono">{currentQuestion.answer}</span>
                             </div>
                             <div className="text-sm text-slate-700 leading-relaxed font-normal border-t border-slate-200/40 pt-2">
-                                <span className="font-bold block mb-1 text-sm tracking-wider text-slate-400">Solution Strategy:</span>
+                                <span className="font-bold block mb-1 text-xs uppercase tracking-wider text-slate-400">Solution Strategy:</span>
                                 {renderLexicalOrText(currentQuestion.explanation)}
                             </div>
                         </div>
@@ -723,11 +791,11 @@ function MathPracticeController() {
                 <div className="flex-1 min-h-0 overflow-y-auto p-6 bg-white rounded-2xl border border-slate-200/70 shadow-sm flex flex-col justify-between">
                     <div className="space-y-5 w-full">
                         <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-                            <span className="text-sm font-bold text-slate-400 tracking-widest">Options Selection</span>
+                            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Answer Choices</span>
                             {!userChoice && (
                                 <button
                                     onClick={() => setIsEliminatorActive(!isEliminatorActive)}
-                                    className={`px-2.5 py-1 rounded-lg text-sm font-bold border transition-all ${isEliminatorActive ? 'bg-slate-900 border-slate-900 text-white shadow-sm' : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50 hover:border-slate-300'}`}
+                                    className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-all ${isEliminatorActive ? 'bg-slate-900 border-slate-900 text-white shadow-sm' : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50 hover:border-slate-300'}`}
                                 >
                                     Eliminate Options
                                 </button>
@@ -741,7 +809,7 @@ function MathPracticeController() {
                                 const isThisCorrectOption = checkIsCorrect(currentQuestion, opt.key)
 
                                 let optionStyle = 'bg-white border-slate-200/80 text-slate-700 hover:bg-slate-50 hover:border-slate-300'
-                                let keyBadgeStyle = 'bg-slate-50 border-slate-200 text-slate-400 group-hover:bg-slate-100'
+                                let keyBadgeStyle = 'bg-slate-50 border-slate-200 text-slate-500 group-hover:bg-slate-100'
 
                                 if (userChoice) {
                                     if (isThisCorrectOption) {
@@ -764,7 +832,7 @@ function MathPracticeController() {
                                         className={`p-4 rounded-xl border text-sm flex items-center justify-between gap-4 transition-all select-none group ${userChoice ? 'cursor-default' : 'cursor-pointer'} ${optionStyle}`}
                                     >
                                         <div className="flex items-center gap-4 overflow-x-auto w-full">
-                                            <span className={`w-7 h-7 rounded-lg border flex items-center justify-center font-bold text-sm shrink-0 transition-colors ${keyBadgeStyle}`}>
+                                            <span className={`w-7 h-7 rounded-lg border flex items-center justify-center font-bold text-xs shrink-0 transition-colors ${keyBadgeStyle}`}>
                                                 {opt.key}
                                             </span>
                                             <div className="leading-relaxed text-[14px] py-0.5 overflow-x-auto w-full font-medium">
@@ -774,7 +842,7 @@ function MathPracticeController() {
                                         {isEliminatorActive && !userChoice && (
                                             <button
                                                 onClick={(e) => handleToggleCrossout(currentQuestion.id, opt.key, e)}
-                                                className="text-sm font-bold tracking-wider text-slate-400 hover:text-slate-800 hover:border-slate-300 shrink-0 border border-slate-200 rounded-lg px-2.5 py-1 bg-white shadow-none transition-colors"
+                                                className="text-xs font-bold uppercase tracking-wider text-slate-400 hover:text-slate-800 shrink-0 border border-slate-200 rounded-lg px-2.5 py-1 bg-white shadow-none transition-colors"
                                             >
                                                 {isEliminated ? 'Restore' : 'Strike'}
                                             </button>
@@ -785,9 +853,9 @@ function MathPracticeController() {
                         </div>
                     </div>
 
-                    <div className="pt-6 shrink-0 border-t border-slate-50 mt-6 flex items-center justify-between text-sm text-slate-400 font-medium">
+                    <div className="pt-6 shrink-0 border-t border-slate-50 mt-6 flex items-center justify-between text-xs text-slate-400 font-medium">
                         <span>
-                            {isSavingAnswer[currentQuestion.id] ? "Recording attempt..." : userChoice ? "Answer Submitted" : "Awaiting input..."}
+                            {isSavingAnswer[currentQuestion.id] ? "Recording attempt..." : userChoice ? "Answer Submitted" : "Awaiting selection..."}
                         </span>
                     </div>
                 </div>
@@ -800,14 +868,14 @@ function MathPracticeController() {
                     <button
                         onClick={handlePrevQuestion}
                         disabled={currentQuestionIndex === 0}
-                        className="inline-flex items-center gap-1 px-4 py-2 bg-white text-slate-700 border border-slate-200 rounded-xl disabled:opacity-40 disabled:cursor-not-allowed text-sm font-bold tracking-wider hover:bg-slate-50 hover:border-slate-300 transition-all"
+                        className="inline-flex items-center gap-1 px-4 py-2 bg-white text-slate-700 border border-slate-200 rounded-xl disabled:opacity-40 disabled:cursor-not-allowed text-xs font-bold uppercase tracking-wider hover:bg-slate-50 hover:border-slate-300 transition-all"
                     >
                         <ArrowLeft size={12} weight="bold" /> Previous
                     </button>
                     <button
                         onClick={handleNextQuestion}
                         disabled={currentQuestionIndex === questions.length - 1}
-                        className="inline-flex items-center gap-1.5 px-5 py-2.5 bg-slate-900 text-white font-bold text-sm rounded-xl tracking-wider border border-slate-900 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-800 transition-all shadow-sm active:scale-[0.99]"
+                        className="inline-flex items-center gap-1.5 px-5 py-2.5 bg-slate-900 text-white font-bold text-xs rounded-xl uppercase tracking-wider border border-slate-900 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-800 transition-all shadow-sm active:scale-[0.99]"
                     >
                         Next <ArrowRight size={12} weight="bold" />
                     </button>

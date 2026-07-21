@@ -8,7 +8,7 @@ const pool = new Pool({
     ssl: { rejectUnauthorized: false },
 })
 
-async function getAuthToken(): Promise<string | null> {
+async function getAuthContext(): Promise<{ token: string | null; rawCookies: string | null }> {
     try {
         const cookieStore = await cookies()
         const headersList = await headers()
@@ -20,8 +20,17 @@ async function getAuthToken(): Promise<string | null> {
             token = authHeader.substring(7).trim()
         }
 
+        const allCookies = cookieStore.getAll()
+        const rawCookies = allCookies.map(c => `${c.name}=${c.value}`).join("; ")
+
         if (!token) {
-            const possibleCookies = ["access_token_cookie", "token", "next-auth.session-token", "__Secure-next-auth.session-token"]
+            const possibleCookies = [
+                "access_token_cookie",
+                "token",
+                "next-auth.session-token",
+                "__Secure-next-auth.session-token",
+                "session"
+            ]
             for (const name of possibleCookies) {
                 const cookieVal = cookieStore.get(name)?.value
                 if (cookieVal && cookieVal !== "undefined" && cookieVal !== "null") {
@@ -31,9 +40,9 @@ async function getAuthToken(): Promise<string | null> {
             }
         }
 
-        return token
+        return { token, rawCookies: rawCookies || null }
     } catch {
-        return null
+        return { token: null, rawCookies: null }
     }
 }
 
@@ -41,11 +50,18 @@ async function getUserIdFromSession(explicitToken?: string | null): Promise<stri
     const backendUrl = process.env.NEXT_PUBLIC_LEARNHOUSE_BACKEND_URL || "http://localhost:9000"
 
     try {
-        const token = explicitToken || await getAuthToken()
-        if (!token) return null
+        const { token: extractedToken, rawCookies } = await getAuthContext()
+        const token = explicitToken || extractedToken
+
+        const requestHeaders: Record<string, string> = {}
+        if (token) requestHeaders["Authorization"] = `Bearer ${token}`
+        if (rawCookies) requestHeaders["Cookie"] = rawCookies
+
+        if (!token && !rawCookies) return null
 
         const sessionResponse = await fetch(`${backendUrl}/api/v1/users/session`, {
-            headers: { Authorization: `Bearer ${token}` },
+            headers: requestHeaders,
+            cache: "no-store",
         })
 
         if (!sessionResponse.ok) return null
@@ -57,11 +73,15 @@ async function getUserIdFromSession(explicitToken?: string | null): Promise<stri
     }
 }
 
-
-export async function getMathQuestionsAction(options?: { domain?: string; limit?: number }) {
+export async function getMathQuestionsAction(
+    options?: { domain?: string; limit?: number },
+    explicitToken?: string | null
+) {
     try {
-        const token = await getAuthToken()
+        const { token: extractedToken, rawCookies } = await getAuthContext()
+        const token = explicitToken || extractedToken
         const userId = await getUserIdFromSession(token)
+
         if (!userId) {
             return { success: false, error: "Unauthorized session context" }
         }
@@ -75,9 +95,8 @@ export async function getMathQuestionsAction(options?: { domain?: string; limit?
         const url = `${payloadUrl}/api/questions?${params.toString()}`
 
         const fetchHeaders: Record<string, string> = {}
-        if (token) {
-            fetchHeaders["Authorization"] = `Bearer ${token}`
-        }
+        if (token) fetchHeaders["Authorization"] = `Bearer ${token}`
+        if (rawCookies) fetchHeaders["Cookie"] = rawCookies
 
         const response = await fetch(url, { headers: fetchHeaders })
 
@@ -88,14 +107,33 @@ export async function getMathQuestionsAction(options?: { domain?: string; limit?
         const data = await response.json()
         const rawDocs = data.docs || []
 
+        const getImageUrl = (img: any): string | null => {
+            if (!img) return null
+            if (typeof img === 'string') {
+                return img.startsWith('/') ? `${payloadUrl}${img}` : img
+            }
+            const urlStr = img.url || img.src || img.filename
+            if (urlStr) {
+                return urlStr.startsWith('/') ? `${payloadUrl}${urlStr}` : urlStr
+            }
+            return null
+        }
+
         const uniqueDocsMap = new Map<string, any>()
         for (const doc of rawDocs) {
             if (doc && doc.id) {
                 const docString = JSON.stringify(doc).toLowerCase()
-                const isMath = docString.includes('"math"') || docString.includes(':math') || docString.includes('"mathematics"')
+                const isMath = doc.section === 'math' ||
+                    docString.includes('"math"') ||
+                    docString.includes(':math') ||
+                    docString.includes('"mathematics"')
 
                 if (isMath) {
-                    // 3. Similar Questions Filter: Match by domain/category if provided
+                    const imgUrl = getImageUrl(doc.image || doc.stimulusImage || doc.stimulus_image || doc.media)
+                    if (imgUrl && typeof doc.stimulus === 'string' && !doc.stimulus.includes(imgUrl)) {
+                        doc.stimulus = `![Stimulus Image](${imgUrl})\n\n${doc.stimulus}`
+                    }
+
                     if (options?.domain) {
                         const searchDomain = options.domain.toLowerCase().trim()
                         const docDomain = String(doc.domain || doc.category || doc.topic || '').toLowerCase()
@@ -122,23 +160,29 @@ export async function getMathQuestionsAction(options?: { domain?: string; limit?
     }
 }
 
-export async function submitMathAttemptAction(body: {
-    questionId: string | number
-    selectedOptionKey: string
-    isCorrect: boolean
-}) {
+export async function submitMathAttemptAction(
+    body: {
+        questionId: string | number
+        selectedOptionKey: string
+        isCorrect: boolean
+        timeSpentSeconds?: number
+        testSessionId?: string
+    },
+    explicitToken?: string | null
+) {
     try {
-        const userId = await getUserIdFromSession()
+        const userId = await getUserIdFromSession(explicitToken)
         if (!userId) {
             return { success: false, error: "Unauthorized session context" }
         }
 
-        const { questionId, selectedOptionKey, isCorrect } = body
+        const { questionId, selectedOptionKey, isCorrect, timeSpentSeconds, testSessionId } = body
         const cleanQuestionId = String(questionId)
         const cleanOptionKey = String(selectedOptionKey)
+        const cleanSessionId = testSessionId ? String(testSessionId) : null
 
         const checkDuplicate = await pool.query(
-            `SELECT selected_option FROM math_attempts WHERE user_id = $1 AND question_id = $2`,
+            `SELECT selected_option_key FROM user_attempts WHERE user_id = $1 AND question_id = $2 AND section = 'math'`,
             [userId, cleanQuestionId]
         )
 
@@ -148,20 +192,24 @@ export async function submitMathAttemptAction(body: {
 
         await pool.query(
             `
-                INSERT INTO math_attempts (
+                INSERT INTO user_attempts (
                     user_id,
                     question_id,
-                    selected_option,
+                    section,
+                    selected_option_key,
                     is_correct,
-                    completed_at
+                    time_spent_seconds,
+                    test_session_id
                 )
-                VALUES ($1, $2, $3, $4, NOW())
+                VALUES ($1, $2, 'math', $3, $4, $5, $6)
             `,
             [
                 userId,
                 cleanQuestionId,
                 cleanOptionKey,
-                isCorrect
+                isCorrect,
+                timeSpentSeconds ?? 0,
+                cleanSessionId
             ]
         )
 
@@ -171,9 +219,9 @@ export async function submitMathAttemptAction(body: {
     }
 }
 
-export async function getMathAnalyticsAction() {
+export async function getMathAnalyticsAction(explicitToken?: string | null) {
     try {
-        const userId = await getUserIdFromSession()
+        const userId = await getUserIdFromSession(explicitToken)
         if (!userId) {
             return { success: false, error: "Unauthorized session context" }
         }
@@ -183,18 +231,18 @@ export async function getMathAnalyticsAction() {
                 SELECT
                     COUNT(*) as total_attempts,
                     COUNT(CASE WHEN is_correct = true THEN 1 END) as total_correct
-                FROM math_attempts
-                WHERE user_id = $1
+                FROM user_attempts
+                WHERE user_id = $1 AND section = 'math'
             `,
             [userId]
         )
 
         const historyQuery = await pool.query(
             `
-                SELECT question_id, selected_option, is_correct, completed_at
-                FROM math_attempts
-                WHERE user_id = $1
-                ORDER BY completed_at DESC
+                SELECT question_id, selected_option_key AS selected_option, is_correct, created_at AS completed_at
+                FROM user_attempts
+                WHERE user_id = $1 AND section = 'math'
+                ORDER BY created_at DESC
             `,
             [userId]
         )

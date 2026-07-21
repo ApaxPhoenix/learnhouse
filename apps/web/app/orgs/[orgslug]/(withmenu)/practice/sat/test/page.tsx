@@ -43,6 +43,10 @@ interface LexicalNode {
     type: string
     format?: number
     text?: string
+    value?: any
+    src?: string
+    url?: string
+    alt?: string
     children?: LexicalNode[]
 }
 
@@ -117,32 +121,104 @@ const renderTextWithMath = (text: string) => {
     })
 }
 
+const renderStringWithImagesAndMath = (text: string) => {
+    if (!text) return null
+
+    const imgRegex = /<img\s+[^>]*src=["']([^"']+)["'][^>]*>|!\[([^\]]*)\]\(([^)]+)\)/gi
+    const parts: React.ReactNode[] = []
+    let lastIndex = 0
+    let match: RegExpExecArray | null
+
+    while ((match = imgRegex.exec(text)) !== null) {
+        if (match.index > lastIndex) {
+            parts.push(renderTextWithMath(text.substring(lastIndex, match.index)))
+        }
+
+        const src = match[1] || match[3]
+        const alt = match[2] || 'Stimulus visual'
+        const payloadUrl = process.env.NEXT_PUBLIC_LEARNHOUSE_PAYLOAD_URL || ''
+        const imageUrl = src.startsWith('http') ? src : `${payloadUrl}${src}`
+
+        parts.push(
+            <div key={match.index} className="my-4 flex justify-center items-center w-full">
+                <img
+                    src={imageUrl}
+                    alt={alt}
+                    className="max-w-full max-h-80 object-contain rounded-lg border border-slate-200 shadow-sm mx-auto block"
+                />
+            </div>
+        )
+
+        lastIndex = imgRegex.lastIndex
+    }
+
+    if (lastIndex < text.length) {
+        parts.push(renderTextWithMath(text.substring(lastIndex)))
+    }
+
+    return parts
+}
+
+const renderLexicalNode = (node: LexicalNode, index: number): React.ReactNode => {
+    if (!node) return null
+
+    if (node.type === 'upload' || node.type === 'image') {
+        const rawUrl = node.value?.url || node.src || node.url
+        if (rawUrl) {
+            const payloadUrl = process.env.NEXT_PUBLIC_LEARNHOUSE_PAYLOAD_URL || ''
+            const imageUrl = rawUrl.startsWith('http') ? rawUrl : `${payloadUrl}${rawUrl}`
+            return (
+                <div key={index} className="my-4 flex justify-center items-center w-full">
+                    <img
+                        src={imageUrl}
+                        alt={node.value?.alt || node.alt || 'Stimulus visual'}
+                        className="max-w-full max-h-80 object-contain rounded-lg border border-slate-200 shadow-sm mx-auto block"
+                    />
+                </div>
+            )
+        }
+    }
+
+    if (node.type === 'paragraph') {
+        return (
+            <p key={index} className="mb-4 text-slate-700 leading-relaxed text-sm">
+                {node.children?.map((child, childIdx) => renderLexicalNode(child, childIdx))}
+            </p>
+        )
+    }
+
+    if (node.text !== undefined) {
+        const content = renderTextWithMath(node.text || '')
+        if (node.format === 1) {
+            return <span key={index} className="font-semibold text-slate-900">{content}</span>
+        }
+        return <React.Fragment key={index}>{content}</React.Fragment>
+    }
+
+    if (node.children && node.children.length > 0) {
+        return (
+            <div key={index}>
+                {node.children.map((child, childIdx) => renderLexicalNode(child, childIdx))}
+            </div>
+        )
+    }
+
+    return null
+}
+
 const renderLexicalOrText = (content: string | LexicalRoot | null | undefined): React.ReactNode => {
     if (!content) return null
     if (typeof content === 'string') {
-        return renderTextWithMath(content)
+        return renderStringWithImagesAndMath(content)
     }
 
     try {
         if (content.root?.children) {
-            return content.root.children.map((node: LexicalNode, childIndex: number) => {
-                if (node.type === 'paragraph') {
-                    return (
-                        <p key={childIndex} className="mb-4 text-slate-700 leading-relaxed text-sm">
-                            {node.children?.map((child: LexicalNode, textIndex: number) => {
-                                return (
-                                    <span key={textIndex} className={child.format === 1 ? "font-semibold text-slate-900" : ""}>
-                                        {renderTextWithMath(child.text || '')}
-                                    </span>
-                                )
-                            })}
-                        </p>
-                    )
-                }
-                return null
-            })
+            return content.root.children.map((node: LexicalNode, childIndex: number) =>
+                renderLexicalNode(node, childIndex)
+            )
         }
-    } catch (error: unknown) {
+    } catch {
         return <p className="text-slate-400 text-sm italic">Error parsing structure content</p>
     }
     return null
@@ -678,20 +754,20 @@ function PracticeTestController() {
                     <div className="space-y-4 flex-1">
                         <div className="bg-slate-900 rounded-2xl p-5 space-y-4 border border-slate-950 shadow-sm">
                             <div className="text-left border-b border-slate-800 pb-3 flex justify-between items-baseline">
-                                <span className="text-sm font-bold text-slate-400  tracking-widest block">Total SAT Score</span>
+                                <span className="text-sm font-bold text-slate-400 tracking-widest block">Total SAT Score</span>
                                 <span className="text-4xl font-extrabold tracking-tight text-white block font-mono">
                                     {totalScore}
                                 </span>
                             </div>
                             <div className="grid grid-cols-2 gap-4 pt-1">
                                 <div className="text-left space-y-1">
-                                    <span className="text-sm font-bold text-slate-400  tracking-wider block">Reading & Writing</span>
+                                    <span className="text-sm font-bold text-slate-400 tracking-wider block">Reading & Writing</span>
                                     <span className="text-lg font-bold text-white block font-mono">
                                         {rwScore} <span className="text-sm text-slate-500 font-normal">/ 800</span>
                                     </span>
                                 </div>
                                 <div className="text-left space-y-1">
-                                    <span className="text-sm font-bold text-slate-400  tracking-wider block">Mathematics</span>
+                                    <span className="text-sm font-bold text-slate-400 tracking-wider block">Mathematics</span>
                                     <span className="text-lg font-bold text-white block font-mono">
                                         {mathScore} <span className="text-sm text-slate-500 font-normal">/ 800</span>
                                     </span>
@@ -701,11 +777,11 @@ function PracticeTestController() {
 
                         <div className="grid grid-cols-2 gap-3">
                             <div className="bg-slate-50 border border-slate-200/60 rounded-xl p-4 text-left">
-                                <span className="text-sm font-bold  tracking-wider text-slate-400 block">Questions Correct</span>
+                                <span className="text-sm font-bold tracking-wider text-slate-400 block">Questions Correct</span>
                                 <span className="text-base font-extrabold text-slate-800 block mt-1 font-mono">{totalCorrect} / {totalActive}</span>
                             </div>
                             <div className="bg-slate-50 border border-slate-200/60 rounded-xl p-4 text-left">
-                                <span className="text-sm font-bold  tracking-wider text-slate-400 block">Total Accuracy</span>
+                                <span className="text-sm font-bold tracking-wider text-slate-400 block">Total Accuracy</span>
                                 <span className="text-base font-extrabold text-slate-800 block mt-1 font-mono">
                                     {totalActive > 0 ? Math.round((totalCorrect / totalActive) * 100) : 0}%
                                 </span>
@@ -730,9 +806,8 @@ function PracticeTestController() {
         return (
             <div className="h-screen w-screen bg-slate-50 flex items-center justify-center p-6 text-slate-900">
                 <div className="max-w-lg w-full bg-white rounded-2xl border border-slate-200/80 p-8 text-center space-y-8 mx-auto shadow-sm">
-                    <div className="w-16 h-16 bg-slate-50 text-slate-900 rounded-2xl flex items-center justify-center mx-auto border border-slate-200" />
                     <div className="space-y-3">
-                        <span className="text-sm font-bold bg-slate-100 text-slate-800 px-3 py-1 rounded-full  tracking-wider border border-slate-200">
+                        <span className="text-sm font-bold bg-slate-100 text-slate-800 px-3 py-1 rounded-full tracking-wider border border-slate-200">
                             Official Intermission Period
                         </span>
                         <div className="w-full h-1"></div>
@@ -743,7 +818,7 @@ function PracticeTestController() {
                     </div>
 
                     <div className="bg-slate-50 border border-slate-100 rounded-2xl p-5 max-w-xs mx-auto">
-                        <div className="text-sm font-bold text-slate-400  tracking-wider flex items-center justify-center gap-1.5">
+                        <div className="text-sm font-bold text-slate-400 tracking-wider flex items-center justify-center gap-1.5">
                             <Clock size={14} weight="bold" /> Time Remaining
                         </div>
                         <div className="text-3xl font-extrabold text-slate-900 mt-1 font-mono tracking-tight">{formatTime(breakTimeLeft)}</div>
@@ -781,7 +856,7 @@ function PracticeTestController() {
                         {currentSection === 1 && hasMath && (
                             <button
                                 onClick={() => setCurrentSection(2)}
-                                className="w-full py-3 bg-slate-900 hover:bg-slate-800 text-white text-sm font-bold  tracking-wider rounded-xl transition-colors cursor-pointer"
+                                className="w-full py-3 bg-slate-900 hover:bg-slate-800 text-white text-sm font-bold tracking-wider rounded-xl transition-colors cursor-pointer"
                             >
                                 Route to Mathematics Section
                             </button>
@@ -792,7 +867,7 @@ function PracticeTestController() {
                                     setCurrentSection(1)
                                     setCurrentQuestionIndex(0)
                                 }}
-                                className="w-full py-3 bg-slate-900 hover:bg-slate-800 text-white text-sm font-bold  tracking-wider rounded-xl transition-colors cursor-pointer"
+                                className="w-full py-3 bg-slate-900 hover:bg-slate-800 text-white text-sm font-bold tracking-wider rounded-xl transition-colors cursor-pointer"
                             >
                                 Route to English Section
                             </button>
@@ -811,7 +886,7 @@ function PracticeTestController() {
             <div className="h-screen w-screen bg-slate-50 flex flex-col overflow-hidden text-slate-900 relative">
                 <header className="h-16 bg-white border-b border-slate-200/60 px-6 flex items-center justify-between flex-shrink-0 z-20">
                     <div className="flex flex-col">
-                        <span className="text-sm font-bold text-slate-400  tracking-widest block">
+                        <span className="text-sm font-bold text-slate-400 tracking-widest block">
                             Section {currentSection}: {currentSection === 1 ? 'Reading and Writing' : 'Mathematics'}
                         </span>
                         <span className="text-sm font-bold text-slate-800 block flex items-center gap-1.5 tracking-wide mt-0.5">
@@ -929,7 +1004,7 @@ function PracticeTestController() {
                 <footer className="h-16 bg-white border-t border-slate-200/60 px-6 flex items-center justify-between flex-shrink-0 z-20">
                     <button
                         onClick={() => setReview(false)}
-                        className="inline-flex items-center gap-2 px-4 py-2 border border-slate-200 bg-white rounded-xl text-slate-700 hover:bg-slate-50 text-sm  font-bold tracking-wider transition-all cursor-pointer"
+                        className="inline-flex items-center gap-2 px-4 py-2 border border-slate-200 bg-white rounded-xl text-slate-700 hover:bg-slate-50 text-sm font-bold tracking-wider transition-all cursor-pointer"
                     >
                         <ArrowLeft size={14} weight="bold" /> Back To Test
                     </button>
@@ -969,7 +1044,7 @@ function PracticeTestController() {
                     onMouseDown={handleMouseDown}
                 >
                     <div className="drag-handle bg-slate-900 text-white px-4 py-3 flex items-center justify-between cursor-move text-sm font-bold tracking-wide border-b border-slate-800">
-                        <span className="flex items-center gap-1.5  tracking-wider text-sm text-slate-300">
+                        <span className="flex items-center gap-1.5 tracking-wider text-sm text-slate-300">
                             <Calculator size={14} weight="bold" /> Desmos Workspace
                         </span>
                         <div className="flex items-center gap-2">
