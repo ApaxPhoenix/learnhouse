@@ -7,9 +7,13 @@ Rate limits:
 - Verification resend: 5 attempts per 5 minutes per email
 """
 import ipaddress
+import logging
 from typing import Tuple
 from fastapi import HTTPException, Request
+from redis.exceptions import RedisError
 from src.core.redis import get_redis_client as _get_redis_pool_client
+
+logger = logging.getLogger(__name__)
 
 
 class RateLimitExceeded(Exception):
@@ -108,8 +112,18 @@ def check_rate_limit(
     if r is None:
         r = get_redis_connection()
 
-    rate_limit_key = f"rate_limit:{key}"
+    try:
+        return _check_rate_limit(r, f"rate_limit:{key}", max_attempts, window_seconds)
+    except RedisError:
+        # Redis down, quota exhausted (e.g. Upstash "temporarily rate-limited"),
+        # or timing out: fail open like the token-revocation checks in
+        # security/auth.py. Otherwise one Redis hiccup locks everyone out of
+        # login with an unhandled 500.
+        logger.warning("Rate limit check skipped for %s: Redis unavailable", key, exc_info=True)
+        return True, 0, window_seconds
 
+
+def _check_rate_limit(r, rate_limit_key: str, max_attempts: int, window_seconds: int) -> Tuple[bool, int, int]:
     # Get current count
     current_count = r.get(rate_limit_key)
     ttl = r.ttl(rate_limit_key)

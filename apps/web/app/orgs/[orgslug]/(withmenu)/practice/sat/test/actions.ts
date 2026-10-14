@@ -1,237 +1,145 @@
-"use server"
+'use server'
 
-import { headers } from "next/headers"
-import { Pool } from "pg"
+import { randomUUID } from 'node:crypto'
+import {
+  failure,
+  findQuestions,
+  getQuestionIndex,
+  getSessionUserId,
+  pool,
+  shuffle,
+  UNAUTHORIZED,
+} from '@/lib/sat/server'
+import {
+  DOMAIN_ORDER,
+  isCorrectChoice,
+  type SatQuestion,
+  type Section,
+  sectionScore,
+} from '@/lib/sat/sat'
 
-const pool = new Pool({
-    connectionString: process.env.PAYLOAD_NEON_URL,
-    ssl: { rejectUnauthorized: false },
-})
+// One module per section, sized like a Digital SAT module.
+const SECTION_SIZE: Record<Section, number> = { english: 27, math: 22 }
+const DIFFICULTY_RANK = { easy: 0, medium: 1, hard: 2 } as const
 
-async function getUserIdFromSession(): Promise<string | null> {
-    const backendUrl = process.env.NEXT_PUBLIC_LEARNHOUSE_BACKEND_URL || "http://localhost:9000"
-
-    try {
-        const incomingHeaders = await headers()
-        const cookieHeader = incomingHeaders.get("cookie")
-        const authHeader = incomingHeaders.get("Authorization") || incomingHeaders.get("authorization")
-
-        const requestHeaders: Record<string, string> = {}
-        if (cookieHeader) requestHeaders["cookie"] = cookieHeader
-        if (authHeader) requestHeaders["Authorization"] = authHeader
-
-        if (!cookieHeader && !authHeader) {
-            return null
-        }
-
-        const sessionResponse = await fetch(`${backendUrl}/api/v1/users/session`, {
-            headers: requestHeaders,
-            cache: "no-store",
-        })
-
-        if (!sessionResponse.ok) {
-            return null
-        }
-
-        const session = await sessionResponse.json()
-        return session.id ?? session.user?.id ?? null
-    } catch {
-        return null
+function orderLikeBluebook(section: Section, questions: SatQuestion[]) {
+  return [...questions].sort((a, b) => {
+    if (section === 'english') {
+      const domain = DOMAIN_ORDER.indexOf(a.domain ?? '') - DOMAIN_ORDER.indexOf(b.domain ?? '')
+      if (domain) return domain
     }
+    return DIFFICULTY_RANK[a.difficulty] - DIFFICULTY_RANK[b.difficulty]
+  })
 }
 
-export async function getQuestionsAction() {
-    try {
-        const userId = await getUserIdFromSession()
-        if (!userId) {
-            return { success: false, error: "Unauthorized session context" }
-        }
+/** Draws a fresh random test. Nothing is stored until the test is submitted. */
+export async function startPracticeTestAction() {
+  try {
+    const userId = await getSessionUserId()
+    if (!userId) return UNAUTHORIZED
 
-        const payloadUrl = process.env.NEXT_PUBLIC_LEARNHOUSE_PAYLOAD_URL || "http://localhost:3001"
+    const [english, math] = await Promise.all([
+      findQuestions({ section: 'english' }),
+      findQuestions({ section: 'math' }),
+    ])
 
-        const params = new URLSearchParams()
-        params.append('limit', '0')
-        params.append('where[status][equals]', 'active')
-
-        const url = `${payloadUrl}/api/questions?${params.toString()}`
-        const response = await fetch(url)
-
-        if (!response.ok) {
-            throw new Error(`Failed to fetch questions: ${response.statusText}`)
-        }
-
-        const data = await response.json()
-        const rawDocs = data.docs || []
-
-        const uniqueDocsMap = new Map<string, any>()
-        for (const doc of rawDocs) {
-            if (doc && doc.id) {
-                uniqueDocsMap.set(String(doc.id), doc)
-            }
-        }
-
-        return { success: true, docs: Array.from(uniqueDocsMap.values()) }
-    } catch (err: any) {
-        return { success: false, error: err.message }
+    return {
+      success: true as const,
+      unauthorized: false as const,
+      testSessionId: randomUUID(),
+      startedAt: new Date().toISOString(),
+      english: orderLikeBluebook('english', shuffle(english).slice(0, SECTION_SIZE.english)),
+      math: orderLikeBluebook('math', shuffle(math).slice(0, SECTION_SIZE.math)),
     }
+  } catch (error) {
+    return failure(error)
+  }
 }
 
-export async function submitAttemptAction(body: {
-    questionId: string | number
-    selectedOptionKey: string
-    isCorrect: boolean
-    timeSpentSeconds?: number
-    testSessionId?: string
+/** Scores the test on the server and saves the session with every answer. */
+export async function submitPracticeTestAction(input: {
+  testSessionId: string
+  startedAt: string
+  questionIds: string[]
+  answers: Record<string, string>
 }) {
-    try {
-        const userId = await getUserIdFromSession()
-        if (!userId) {
-            return { success: false, error: "Unauthorized session context" }
-        }
+  try {
+    const userId = await getSessionUserId()
+    if (!userId) return UNAUTHORIZED
 
-        const { questionId, selectedOptionKey, isCorrect, timeSpentSeconds, testSessionId } = body
+    const { byId } = await getQuestionIndex()
+    const questions = input.questionIds
+      .map((id) => byId.get(String(id)))
+      .filter((q): q is SatQuestion => !!q)
 
-        const cleanQuestionId = String(questionId)
-        const cleanOptionKey = String(selectedOptionKey)
-        const cleanSessionId = testSessionId ? String(testSessionId) : null
-
-        await pool.query(
-            `
-                INSERT INTO user_attempts (
-                    user_id,
-                    question_id,
-                    selected_option_key,
-                    is_correct,
-                    time_spent_seconds,
-                    test_session_id
-                )
-                VALUES ($1, $2, $3, $4, $5, $6)
-            `,
-            [
-                userId,
-                cleanQuestionId,
-                cleanOptionKey,
-                isCorrect,
-                timeSpentSeconds ?? 0,
-                cleanSessionId
-            ]
-        )
-
-        return { success: true }
-    } catch (err: any) {
-        return { success: false, error: err.message }
+    const tally = { english: { correct: 0, total: 0 }, math: { correct: 0, total: 0 } }
+    const results: Record<string, boolean> = {}
+    for (const q of questions) {
+      const correct = isCorrectChoice(q, input.answers[q.id])
+      results[q.id] = correct
+      tally[q.section].total += 1
+      if (correct) tally[q.section].correct += 1
     }
-}
 
-export async function submitTestSessionAction(body: {
-    testSessionId: string
-    englishCorrect: number
-    englishTotal: number
-    mathCorrect: number
-    mathTotal: number
-    rwScore: number
-    mathScore: number
-    totalScore: number
-}) {
+    const rwScore = sectionScore(tally.english.correct, tally.english.total)
+    const mathScore = sectionScore(tally.math.correct, tally.math.total)
+    const startedAt = Number.isNaN(Date.parse(input.startedAt))
+      ? new Date()
+      : new Date(input.startedAt)
+
+    const client = await pool.connect()
     try {
-        const userId = await getUserIdFromSession()
-        if (!userId) {
-            return { success: false, error: "Unauthorized session context" }
-        }
-
-        const {
-            testSessionId,
-            englishCorrect,
-            englishTotal,
-            mathCorrect,
-            mathTotal,
-            rwScore,
-            mathScore,
-            totalScore
-        } = body
-
-        await pool.query(
-            `
-                INSERT INTO user_test_sessions (
-                    user_id,
-                    test_session_id,
-                    english_correct,
-                    english_total,
-                    math_correct,
-                    math_total,
-                    rw_score,
-                    math_score,
-                    total_score,
-                    completed_at
-                )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
-                    ON CONFLICT (test_session_id) 
-                DO UPDATE SET
-                    english_correct = EXCLUDED.english_correct,
-                                           english_total = EXCLUDED.english_total,
-                                           math_correct = EXCLUDED.math_correct,
-                                           math_total = EXCLUDED.math_total,
-                                           rw_score = EXCLUDED.rw_score,
-                                           math_score = EXCLUDED.math_score,
-                                           total_score = EXCLUDED.total_score,
-                                           completed_at = NOW()
-            `,
-            [
-                userId,
-                String(testSessionId),
-                englishCorrect,
-                englishTotal,
-                mathCorrect,
-                mathTotal,
-                rwScore,
-                mathScore,
-                totalScore
-            ]
+      await client.query('BEGIN')
+      await client.query(
+        `INSERT INTO user_test_sessions (
+            test_session_id, user_id, status,
+            english_correct, english_total, math_correct, math_total,
+            rw_score, math_score, total_score, started_at, completed_at)
+         VALUES ($1, $2, 'completed', $3, $4, $5, $6, $7, $8, $9, $10, NOW())
+         ON CONFLICT (test_session_id) DO NOTHING`,
+        [
+          input.testSessionId,
+          userId,
+          tally.english.correct,
+          tally.english.total,
+          tally.math.correct,
+          tally.math.total,
+          rwScore,
+          mathScore,
+          rwScore + mathScore,
+          startedAt,
+        ]
+      )
+      for (const q of questions) {
+        const choice = input.answers[q.id]
+        if (!choice) continue // skipped questions count as wrong but store no row
+        await client.query(
+          `INSERT INTO user_attempts
+              (user_id, test_session_id, question_id, section, selected_option_key, is_correct)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           ON CONFLICT (test_session_id, question_id) DO NOTHING`,
+          [userId, input.testSessionId, q.id, q.section, choice.toUpperCase(), results[q.id]]
         )
-
-        return { success: true }
-    } catch (err: any) {
-        return { success: false, error: err.message }
+      }
+      await client.query('COMMIT')
+    } catch (error) {
+      await client.query('ROLLBACK')
+      throw error
+    } finally {
+      client.release()
     }
-}
 
-export async function getUserAnalyticsAction() {
-    try {
-        const userId = await getUserIdFromSession()
-        if (!userId) {
-            return { success: false, error: "Unauthorized session context" }
-        }
-
-        const statsQuery = await pool.query(
-            `
-                SELECT
-                    COUNT(*) as total_tests_completed,
-                    MAX(total_score) as high_score,
-                    AVG(total_score)::NUMERIC(10,2) as average_score,
-                    AVG(rw_score)::NUMERIC(10,2) as average_rw,
-                    AVG(math_score)::NUMERIC(10,2) as average_math
-                FROM user_test_sessions
-                WHERE user_id = $1
-            `,
-            [userId]
-        )
-
-        const historyQuery = await pool.query(
-            `
-                SELECT test_session_id, total_score, rw_score, math_score, completed_at
-                FROM user_test_sessions
-                WHERE user_id = $1
-                ORDER BY completed_at DESC
-            `,
-            [userId]
-        )
-
-        return {
-            success: true,
-            summary: statsQuery.rows[0],
-            history: historyQuery.rows
-        }
-    } catch (err: any) {
-        return { success: false, error: err.message }
+    return {
+      success: true as const,
+      unauthorized: false as const,
+      rwScore,
+      mathScore,
+      totalScore: rwScore + mathScore,
+      english: tally.english,
+      math: tally.math,
+      results,
     }
+  } catch (error) {
+    return failure(error)
+  }
 }

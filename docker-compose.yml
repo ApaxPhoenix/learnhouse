@@ -1,23 +1,42 @@
-version: '3.8'
+# LearnHouse — run everything with `pnpm docker:up` (docker compose up --build -d)
+#
+#   learnhouse  FastAPI + Next.js web in one container   → 127.0.0.1:3000
+#   payload     Payload CMS (SAT questions & media)      → 127.0.0.1:3001
+#
+# Both images come from the root Dockerfile. Ports bind to localhost only;
+# nginx on the host (setup.sh) terminates TLS for the two public subdomains.
+# Postgres (Neon) and Redis (Upstash) are managed services, so there are no
+# database containers here.
 
 services:
-  learnhouse-api:
-    build: ./apps/api
-    ports:
-      - "127.0.0.1:9000:9000"
-
   learnhouse:
-    build: ./apps/learnhouse
+    build:
+      context: .
+      target: learnhouse
+    image: learnhouse:latest
+    restart: unless-stopped
+    env_file:
+      - path: apps/api/.env
+      - path: apps/web/.env
+      # Production URLs/domains; copy .env.docker.example → .env.docker
+      - path: .env.docker
+        required: false
+    environment:
+      # Server-side fetches go straight to the CMS container; the browser
+      # still uses NEXT_PUBLIC_LEARNHOUSE_PAYLOAD_URL for images.
+      LEARNHOUSE_INTERNAL_PAYLOAD_URL: http://payload:3001
     ports:
-      - "127.0.0.1:3000:4000"
+      - "127.0.0.1:3000:3000"
     depends_on:
-      learnhouse-api:
-        condition: service_healthy
+      - payload
 
   payload:
-    build: ./apps/payload
+    build:
+      context: .
+      target: payload
+    image: learnhouse-payload:latest
+    restart: unless-stopped
+    env_file:
+      - path: apps/payload/.env
     ports:
-      - "127.0.0.1:3001:4000"
-    depends_on:
-      learnhouse-api:
-        condition: service_healthy
+      - "127.0.0.1:3001:3001"

@@ -1,1 +1,60 @@
-{}
+{
+  "name": "learnhouse",
+  "private": true,
+  "packageManager": "pnpm@11.27.1",
+  "engines": {
+    "node": ">=22"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://gitlab.com/linden-high-school/learnhouse.git"
+  },
+  "scripts": {
+    "dev": "turbo dev",
+    "dev:api": "turbo dev --filter=@learnhouse/api",
+    "dev:web": "turbo dev --filter=@learnhouse/web --filter=@learnhouse/api",
+    "dev:cms": "turbo dev --filter=@learnhouse/payload",
+    "build": "turbo build",
+    "start": "turbo start",
+    "test": "turbo test --continue",
+    "typecheck": "turbo typecheck",
+    "sync": "pnpm --filter @learnhouse/api sync",
+    "format": "biome format . --write",
+    "lint": "biome lint .",
+    "lint:fix": "biome lint . --write",
+    "check": "biome check .",
+    "docker:build": "docker compose build",
+    "docker:up": "docker compose up --build -d",
+    "docker:down": "docker compose down",
+    "docker:logs": "docker compose logs -f"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.14",
+    "turbo": "2.11.4"
+  },
+  "workspaces": {
+    "packages": [
+      "apps/*"
+    ],
+    "catalogs": {
+      "react19": {
+        "@types/react": "19.2.17",
+        "@types/react-dom": "19.2.3",
+        "next": "^16.2.9",
+        "react": "19.2.7",
+        "react-dom": "19.2.7"
+      }
+    }
+  },
+  "overrides": {
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.3",
+    "js-yaml": ">=4.1.1",
+    "jspdf": ">=4.0.0",
+    "lodash": ">=4.17.23",
+    "lodash-es": ">=4.17.23",
+    "preact": ">=10.27.3",
+    "prosemirror-model": "1.25.9",
+    "prosemirror-view": "1.41.9"
+  }
+}

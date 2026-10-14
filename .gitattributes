@@ -1,0 +1,13 @@
+* text=auto eol=lf
+
+# Shell scripts must stay LF or they break inside Linux containers.
+*.sh text eol=lf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.woff binary
+*.woff2 binary

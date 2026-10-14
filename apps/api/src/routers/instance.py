@@ -1,3 +1,6 @@
+import logging
+import os
+
 from fastapi import APIRouter, Depends
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -9,6 +12,12 @@ from src.services.orgs.cache import get_cached_instance_info, set_cached_instanc
 from config.config import get_learnhouse_config
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+
+def _configured_org_slug() -> str:
+    """The single org this deployment serves (same env var the installer uses)."""
+    return os.environ.get("LEARNHOUSE_INITIAL_ORG_SLUG", "").strip().lower()
 
 
 def _strip_port(domain: str) -> str:
@@ -33,17 +42,25 @@ async def get_instance_info(db_session: AsyncSession = Depends(get_db_session)):
     if cached is not None:
         return cached
 
-    default_org_slug = "default"
+    configured_slug = _configured_org_slug()
+    default_org = None
     try:
-        statement = select(Organization).where(Organization.slug == "default")
-        default_org = (await db_session.execute(statement)).scalars().first()
+        # Prefer the configured org, then the conventional "default" slug,
+        # then whatever org exists — this fork serves a single org.
+        for slug in dict.fromkeys(s for s in (configured_slug, "default") if s):
+            statement = select(Organization).where(Organization.slug == slug)
+            default_org = (await db_session.execute(statement)).scalars().first()
+            if default_org:
+                break
         if not default_org:
             statement = select(Organization).order_by(Organization.id).limit(1)
             default_org = (await db_session.execute(statement)).scalars().first()
-        if default_org:
-            default_org_slug = default_org.slug
     except Exception:
-        pass
+        # e.g. Neon waking from suspend. Answer with the configured slug but
+        # don't cache it, so the next request retries the real lookup.
+        logger.warning("Instance info: organization lookup failed", exc_info=True)
+
+    default_org_slug = default_org.slug if default_org else (configured_slug or "default")
 
     config = get_learnhouse_config()
     frontend_domain = config.hosting_config.frontend_domain
@@ -60,5 +77,8 @@ async def get_instance_info(db_session: AsyncSession = Depends(get_db_session)):
         "top_domain": top_domain,
     }
 
-    set_cached_instance_info(result)
+    # Only cache a slug that was confirmed against the database; caching a
+    # fallback would serve "org not found" for the whole 10-minute TTL.
+    if default_org:
+        set_cached_instance_info(result)
     return result

@@ -1,6 +1,13 @@
 import { cookies } from 'next/headers'
+import { getConfig } from '@services/config/config'
 
-const BACKEND_URL = (process.env.NEXT_PUBLIC_LEARNHOUSE_BACKEND_URL || 'http://localhost:1338').replace(/\/+$/, '')
+// Read at runtime (runtime-config.json / env) — process.env.NEXT_PUBLIC_* would
+// be inlined at build time and bake the build machine's URL into the image.
+const BACKEND_URL = (
+  getConfig('LEARNHOUSE_INTERNAL_BACKEND_URL') ||
+  getConfig('NEXT_PUBLIC_LEARNHOUSE_BACKEND_URL') ||
+  'http://localhost:1338'
+).replace(/\/+$/, '')
 
 // Cookie names (must match the API routes)
 const ACCESS_TOKEN_COOKIE = 'LH_access'

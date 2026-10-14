@@ -22,16 +22,18 @@ function loadRuntimeConfig(): Record<string, string> {
       const fs = require('fs')
       const path = require('path')
 
+      // turbopackIgnore: these are runtime-only lookups; without the hint
+      // output tracing copies the entire project into .next/standalone.
       const possiblePaths = [
-        path.join(process.cwd(), 'runtime-config.json'),
-        path.join(__dirname || process.cwd(), 'runtime-config.json'),
-        path.join(__dirname || process.cwd(), '..', 'runtime-config.json'),
+        path.join(/*turbopackIgnore: true*/ process.cwd(), 'runtime-config.json'),
+        path.join(/*turbopackIgnore: true*/ __dirname || process.cwd(), 'runtime-config.json'),
+        path.join(/*turbopackIgnore: true*/ __dirname || process.cwd(), '..', 'runtime-config.json'),
       ]
 
       for (const configPath of possiblePaths) {
         try {
-          if (fs.existsSync(configPath)) {
-            runtimeConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'))
+          if (fs.existsSync(/*turbopackIgnore: true*/ configPath)) {
+            runtimeConfig = JSON.parse(fs.readFileSync(/*turbopackIgnore: true*/ configPath, 'utf8'))
             break
           }
         } catch {}
@@ -103,9 +105,20 @@ export const getAPIUrl = () => {
   return deriveAPIUrl()
 }
 
+// Server-only override (route handlers, server actions, proxy): reach the API
+// directly, e.g. http://127.0.0.1:9000 inside the Docker image, instead of
+// looping out through the public domain. Never used for browser-facing URLs,
+// so SSR markup and client hydration always agree.
+const getInternalBackendUrl = (): string =>
+  typeof window === 'undefined' ? getConfig('LEARNHOUSE_INTERNAL_BACKEND_URL').replace(/\/+$/, '') : ''
+
 export const getServerAPIUrl = () => {
-  return deriveAPIUrl()
+  const internal = getInternalBackendUrl()
+  return internal ? `${internal}/api/v1/` : deriveAPIUrl()
 }
+
+export const getServerBackendUrl = (): string =>
+  getInternalBackendUrl() || getLEARNHOUSE_BACKEND_URL().replace(/\/+$/, '')
 
 export const getBackendUrl = () => getLEARNHOUSE_BACKEND_URL()
 

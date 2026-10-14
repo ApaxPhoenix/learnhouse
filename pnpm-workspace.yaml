@@ -1,0 +1,43 @@
+packages:
+  - 'apps/*'
+
+linkWorkspacePackages: true
+
+catalogs:
+  react19:
+    '@types/react': 19.2.17
+    '@types/react-dom': 19.2.3
+    next: 16.2.9
+    react: 19.2.7
+    react-dom: 19.2.7
+
+allowBuilds:
+  '@parcel/watcher': true
+  '@sentry/cli': false
+  core-js: false
+  esbuild: true
+  protobufjs: false
+  sharp: true
+  unrs-resolver: true
+
+# Carried over from apps/web/package.json "overrides" (bun/npm syntax).
+overrides:
+  '@types/react': 19.2.17
+  '@types/react-dom': 19.2.3
+  js-yaml: '>=4.1.1'
+  jspdf: '>=4.0.0'
+  lodash: '>=4.17.23'
+  lodash-es: '>=4.17.23'
+  preact: '>=10.27.3'
+  prosemirror-model: 1.25.9
+  prosemirror-view: 1.41.9
+
+# Older UI deps (radix 1.0, emoji-mart, cmdk 0.2) still declare React 18 peers
+# but run fine on React 19.
+peerDependencyRules:
+  allowedVersions:
+    react: '19'
+    react-dom: '19'
+
+# Refuse packages published less than a day ago (supply-chain safety).
+minimumReleaseAge: 1440

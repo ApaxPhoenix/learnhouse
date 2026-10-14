@@ -1054,11 +1054,11 @@ const HeroSectionEditor: React.FC<{
                   <Label>{t('dashboard.organization.landing.hero_editor.position')}</Label>
                   <Select
                     value={section.illustration?.position || 'left'}
-                    onValueChange={(value: 'left' | 'right') => onChange({
+                    onValueChange={(value) => onChange({
                       ...section,
                       illustration: {
                         ...section.illustration,
-                        position: value,
+                        position: value as 'left' | 'right',
                         image: section.illustration?.image || { url: '', alt: '' },
                         size: section.illustration?.size || 'medium',
                         verticalAlign: section.illustration?.verticalAlign || 'center'
@@ -1079,11 +1079,11 @@ const HeroSectionEditor: React.FC<{
                   <Label>{t('dashboard.organization.landing.hero_editor.size')}</Label>
                   <Select
                     value={section.illustration?.size || 'medium'}
-                    onValueChange={(value: 'small' | 'medium' | 'large') => onChange({
+                    onValueChange={(value) => onChange({
                       ...section,
                       illustration: {
                         ...section.illustration,
-                        size: value,
+                        size: value as 'small' | 'medium' | 'large',
                         image: section.illustration?.image || { url: '', alt: '' },
                         position: (section.illustration?.position || 'left') as 'left' | 'right',
                         verticalAlign: section.illustration?.verticalAlign || 'center'

@@ -1,0 +1,32 @@
+# Never send secrets or local installs into the build context.
+**/.env
+**/.env.*
+!**/.env.example
+
+**/node_modules
+**/.pnpm-store
+**/.next
+**/.turbo
+**/.venv
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/coverage
+**/test-results
+**/playwright-report
+
+# Generated at container start by server-wrapper.js
+apps/web/public/runtime-config.js
+apps/web/runtime-config.json
+
+# Local API state
+apps/api/content
+apps/api/logs
+
+# Editor / VCS / agent noise
+.git
+**/.idea
+**/.vscode
+**/.DS_Store
+**/.claude
+**/.agents

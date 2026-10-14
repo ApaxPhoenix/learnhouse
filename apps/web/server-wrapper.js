@@ -1,13 +1,33 @@
 #!/usr/bin/env node
 
 /**
- * Server wrapper for Next.js standalone mode
- * This script generates a runtime config file from environment variables
- * and injects them before starting the Next.js server.
+ * Production entrypoint for the web app (`pnpm start` and the Docker image).
+ *
+ * NEXT_PUBLIC_* values are read at runtime, not baked in at build time, so the
+ * same build works on any domain. This writes them to runtime-config.json
+ * (server) and public/runtime-config.js (browser, loaded by app/layout.tsx),
+ * then starts Next:
+ *   - Docker / standalone output: ./server.js sits next to this file
+ *   - plain server (`pnpm build && pnpm start`): runs `next start`
  */
 
 const fs = require('fs');
 const path = require('path');
+
+const standaloneServer = path.join(__dirname, 'server.js');
+const isStandalone = fs.existsSync(standaloneServer);
+
+// Outside Docker the values live in .env files; load them exactly like
+// `next start` would so the browser config matches the server's.
+if (!isStandalone) {
+  try {
+    const nextDir = path.dirname(require.resolve('next/package.json'));
+    const { loadEnvConfig } = require(require.resolve('@next/env', { paths: [nextDir] }));
+    loadEnvConfig(__dirname, false);
+  } catch (error) {
+    console.warn('[server-wrapper] Could not load .env files:', error.message);
+  }
+}
 
 // Read all NEXT_PUBLIC_* environment variables from the environment
 const env = process.env;
@@ -21,7 +41,6 @@ const EXTRA_CLIENT_VARS = ['LEARNHOUSE_PLATFORM_URL'];
 Object.keys(env).forEach((key) => {
   if (key.startsWith('NEXT_PUBLIC_') || EXTRA_CLIENT_VARS.includes(key)) {
     runtimeConfig[key] = env[key];
-    process.env[key] = env[key];
   }
 });
 
@@ -30,34 +49,40 @@ const configPath = path.join(__dirname, 'runtime-config.json');
 fs.writeFileSync(configPath, JSON.stringify(runtimeConfig, null, 2), 'utf8');
 
 // Create client-side runtime config script for browser access
-// In Next.js standalone, public files are served from the public directory
 const publicDir = path.join(__dirname, 'public');
 try {
   if (!fs.existsSync(publicDir)) {
     fs.mkdirSync(publicDir, { recursive: true });
   }
-  const scriptPath = path.join(publicDir, 'runtime-config.js');
   fs.writeFileSync(
-    scriptPath,
+    path.join(publicDir, 'runtime-config.js'),
     `window.__RUNTIME_CONFIG__ = ${JSON.stringify(runtimeConfig)};`,
     'utf8'
   );
 } catch {
-  // Ignore if can't create (non-critical for server-side rendering)
-  // Client-side config is optional if runtime-config.json is available
+  // Non-critical for server-side rendering; runtime-config.json still applies.
 }
 
-// Set default HOSTNAME if not provided
-if (!process.env.HOSTNAME) {
-  process.env.HOSTNAME = '0.0.0.0';
-}
-
-// Set PORT from environment or default
 if (!process.env.PORT) {
   process.env.PORT = '3000';
 }
 
-// Now require and run the actual Next.js server
-// The server.js is in the same directory (standalone output)
-require('./server.js');
-
+if (isStandalone) {
+  // Standalone server.js binds to HOSTNAME; default to all interfaces.
+  if (!process.env.HOSTNAME) {
+    process.env.HOSTNAME = '0.0.0.0';
+  }
+  require('./server.js');
+} else {
+  const { spawn } = require('child_process');
+  const nextBin = require.resolve('next/dist/bin/next');
+  const child = spawn(process.execPath, [nextBin, 'start', '--port', process.env.PORT], {
+    cwd: __dirname,
+    env: process.env,
+    stdio: 'inherit',
+  });
+  for (const signal of ['SIGINT', 'SIGTERM']) {
+    process.on(signal, () => child.kill(signal));
+  }
+  child.on('exit', (code) => process.exit(code ?? 0));
+}

@@ -7,15 +7,17 @@ let LEARNHOUSE_ENV = process.env.NEXT_PUBLIC_LEARNHOUSE_ENV || "dev";
 try {
   const fs = require("fs");
   const path = require("path");
+  // turbopackIgnore: runtime-only lookups; otherwise output tracing copies
+  // the whole project into .next/standalone.
   const possiblePaths = [
-    path.join(process.cwd(), "runtime-config.json"),
-    path.join(__dirname || process.cwd(), "runtime-config.json"),
-    path.join(__dirname || process.cwd(), "..", "runtime-config.json"),
+    path.join(/*turbopackIgnore: true*/ process.cwd(), "runtime-config.json"),
+    path.join(/*turbopackIgnore: true*/ __dirname || process.cwd(), "runtime-config.json"),
+    path.join(/*turbopackIgnore: true*/ __dirname || process.cwd(), "..", "runtime-config.json"),
   ];
   for (const configPath of possiblePaths) {
     try {
-      if (fs.existsSync(configPath)) {
-        const rc = JSON.parse(fs.readFileSync(configPath, "utf8"));
+      if (fs.existsSync(/*turbopackIgnore: true*/ configPath)) {
+        const rc = JSON.parse(fs.readFileSync(/*turbopackIgnore: true*/ configPath, "utf8"));
         SENTRY_DSN = rc.NEXT_PUBLIC_LEARNHOUSE_SENTRY_DSN || SENTRY_DSN;
         LEARNHOUSE_ENV = rc.NEXT_PUBLIC_LEARNHOUSE_ENV || LEARNHOUSE_ENV;
         break;

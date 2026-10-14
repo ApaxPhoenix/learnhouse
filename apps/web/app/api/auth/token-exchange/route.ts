@@ -8,7 +8,11 @@ import {
   getCookieOptions,
 } from '@services/auth/cookies'
 
-const BACKEND_URL = (getConfig('NEXT_PUBLIC_LEARNHOUSE_BACKEND_URL') || 'http://localhost:1338').replace(/\/+$/, '')
+const BACKEND_URL = (
+  getConfig('LEARNHOUSE_INTERNAL_BACKEND_URL') ||
+  getConfig('NEXT_PUBLIC_LEARNHOUSE_BACKEND_URL') ||
+  'http://localhost:1338'
+).replace(/\/+$/, '')
 const PLATFORM_URL = (getConfig('NEXT_PUBLIC_LEARNHOUSE_PLATFORM_URL') || getConfig('LEARNHOUSE_PLATFORM_URL') || 'https://learnhouse.app').replace(/\/+$/, '')
 
 const MAX_CODE_LENGTH = 4096

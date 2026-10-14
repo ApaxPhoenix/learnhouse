@@ -5,8 +5,13 @@ import { fileURLToPath } from 'url'
 
 const __filename = fileURLToPath(import.meta.url)
 const dirname = path.dirname(__filename)
+// pnpm workspace root: dependencies live in <root>/node_modules/.pnpm, so
+// Turbopack and output tracing must be allowed to see past apps/payload.
+const workspaceRoot = path.resolve(dirname, '../..')
 
 const nextConfig: NextConfig = {
+  output: 'standalone',
+  outputFileTracingRoot: workspaceRoot,
   images: {
     localPatterns: [
       {
@@ -24,7 +29,7 @@ const nextConfig: NextConfig = {
     return webpackConfig
   },
   turbopack: {
-    root: path.resolve(dirname),
+    root: workspaceRoot,
   },
 }
 

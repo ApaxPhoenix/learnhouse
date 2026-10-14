@@ -1,4 +1,4 @@
-import { getAPIUrl } from './services/config/config'
+import { getDefaultOrg, getServerAPIUrl } from './services/config/config'
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 
@@ -20,7 +20,7 @@ async function getInstanceInfo(): Promise<InstanceInfo> {
   }
 
   try {
-    const apiUrl = getAPIUrl()
+    const apiUrl = getServerAPIUrl()
     const res = await fetch(`${apiUrl}instance/info`, { signal: AbortSignal.timeout(3000) })
     if (res.ok) {
       const raw = await res.json()
@@ -37,9 +37,16 @@ async function getInstanceInfo(): Promise<InstanceInfo> {
     }
   } catch { /* empty */ }
 
+  // API slow or down (restart, Neon waking from suspend): keep serving the last
+  // org we saw rather than rewriting every page to a slug that doesn't exist.
+  if (_instanceCache) {
+    return _instanceCache.data
+  }
+
   return {
     multi_org_enabled: false,
-    default_org_slug: 'default',
+    // NEXT_PUBLIC_LEARNHOUSE_DEFAULT_ORG — the one org this deployment serves.
+    default_org_slug: getDefaultOrg(),
     mode: 'oss' as const,
     tenancy: 'single' as const,
     frontend_domain: 'localhost:3000',
@@ -90,7 +97,7 @@ function tenantRequestHeaders(
 
 export const config = {
   matcher: [
-    '/((?!api|_next|fonts|umami|ingest|examples|embed|monitoring|[\\w-]+\\.\\w+).*)',
+    '/((?!api|content|_next|fonts|umami|ingest|examples|embed|monitoring|[\\w-]+\\.\\w+).*)',
     '/sitemap.xml',
     '/robots.txt',
     '/podcast/:path*/feed',

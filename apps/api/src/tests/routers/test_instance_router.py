@@ -132,6 +132,8 @@ class TestInstanceRouter:
                 return_value=False,
             ), patch(
                 "src.routers.instance.set_cached_instance_info",
+            ) as mock_set_cache, patch.dict(
+                "os.environ", {"LEARNHOUSE_INITIAL_ORG_SLUG": ""}
             ):
                 async with AsyncClient(
                     transport=ASGITransport(app=app), base_url="http://test"
@@ -142,3 +144,79 @@ class TestInstanceRouter:
 
         assert response.status_code == 200
         assert response.json()["default_org_slug"] == "default"
+        # A fallback slug must never be cached — it would pin "org not found"
+        # for the whole cache TTL after a transient DB error.
+        mock_set_cache.assert_not_called()
+
+    async def test_get_instance_info_db_failure_uses_configured_slug(self):
+        config = SimpleNamespace(
+            hosting_config=SimpleNamespace(
+                frontend_domain="learnhouse.ai",
+                tenancy="single",
+            )
+        )
+        bad_session = Mock()
+        bad_session.execute.side_effect = RuntimeError("db error")
+
+        app = FastAPI()
+        app.include_router(instance_router, prefix="/api/v1/instance")
+        app.dependency_overrides[get_db_session] = lambda: bad_session
+
+        try:
+            with patch(
+                "src.routers.instance.get_cached_instance_info",
+                return_value=None,
+            ), patch(
+                "src.routers.instance.get_learnhouse_config",
+                return_value=config,
+            ), patch(
+                "src.routers.instance.get_deployment_mode",
+                return_value="oss",
+            ), patch(
+                "src.routers.instance.is_multi_org_allowed",
+                return_value=False,
+            ), patch(
+                "src.routers.instance.set_cached_instance_info",
+            ) as mock_set_cache, patch.dict(
+                "os.environ", {"LEARNHOUSE_INITIAL_ORG_SLUG": "LPS"}
+            ):
+                async with AsyncClient(
+                    transport=ASGITransport(app=app), base_url="http://test"
+                ) as local_client:
+                    response = await local_client.get("/api/v1/instance/info")
+        finally:
+            app.dependency_overrides.clear()
+
+        assert response.status_code == 200
+        assert response.json()["default_org_slug"] == "lps"
+        mock_set_cache.assert_not_called()
+
+    async def test_get_instance_info_prefers_configured_org(self, client, db, org):
+        config = SimpleNamespace(
+            hosting_config=SimpleNamespace(
+                frontend_domain="localhost:3000",
+                tenancy="single",
+            )
+        )
+        with patch(
+            "src.routers.instance.get_cached_instance_info",
+            return_value=None,
+        ), patch(
+            "src.routers.instance.get_learnhouse_config",
+            return_value=config,
+        ), patch(
+            "src.routers.instance.get_deployment_mode",
+            return_value="oss",
+        ), patch(
+            "src.routers.instance.is_multi_org_allowed",
+            return_value=False,
+        ), patch(
+            "src.routers.instance.set_cached_instance_info",
+        ) as mock_set_cache, patch.dict(
+            "os.environ", {"LEARNHOUSE_INITIAL_ORG_SLUG": org.slug.upper()}
+        ):
+            response = await client.get("/api/v1/instance/info")
+
+        assert response.status_code == 200
+        assert response.json()["default_org_slug"] == org.slug
+        mock_set_cache.assert_called_once()

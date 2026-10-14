@@ -30,6 +30,13 @@ export default buildConfig({
     pool: {
       connectionString: process.env.DATABASE_URL || '',
     },
+    // NEVER auto-push in dev: the SAT practice tables (user_attempts,
+    // user_test_sessions — apps/web/.../practice/schema.sql) live in this same
+    // database but aren't Payload collections, so drizzle's dev push tries to
+    // DROP them (tablesFilter doesn't cover their sequences). Change the
+    // schema with `pnpm --filter @learnhouse/payload payload migrate:create`
+    // and `... payload migrate` instead.
+    push: false,
   }),
   sharp,
   plugins: [],

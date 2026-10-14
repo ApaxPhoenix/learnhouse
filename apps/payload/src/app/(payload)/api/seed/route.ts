@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
 import { getPayload } from 'payload';
 import config from '@payload-config';
+import type { Question } from '@/payload-types'
 
-const toLexical = (text: string) => ({
+const toLexical = (text: string): Question['stimulus'] => ({
     root: {
         type: 'root',
         children: [
@@ -131,7 +132,7 @@ export async function GET(request: Request) {
         const response = await fetch('https://api.jsonsilo.com/public/942c3c3b-3a0c-4be3-81c2-12029def19f5');
         const data = await response.json() as Record<string, any>;
 
-        const sections = ['english', 'math'];
+        const sections = ['english', 'math'] as const;
         let totalCount = 0;
 
         for (const section of sections) {

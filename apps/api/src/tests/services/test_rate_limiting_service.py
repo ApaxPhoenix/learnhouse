@@ -131,6 +131,26 @@ def test_check_rate_limit_first_attempt_uses_default_redis_connection():
     fake_redis.setex.assert_called_once_with("rate_limit:login:203.0.113.9", 60, 1)
 
 
+def test_check_rate_limit_fails_open_when_redis_errors():
+    # e.g. Upstash quota exhausted — login must still work, not 500.
+    from redis.exceptions import ResponseError
+
+    fake_redis = Mock()
+    fake_redis.get.side_effect = ResponseError(
+        "Your database has been temporarily rate-limited"
+    )
+
+    allowed, count, retry_after = check_rate_limit(
+        key="login:203.0.113.9",
+        max_attempts=3,
+        window_seconds=60,
+        r=fake_redis,
+    )
+
+    assert (allowed, count, retry_after) == (True, 0, 60)
+    fake_redis.setex.assert_not_called()
+
+
 def test_check_rate_limit_blocks_when_limit_is_reached():
     fake_redis = Mock()
     fake_redis.get.return_value = b"3"

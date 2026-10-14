@@ -1,628 +1,474 @@
-"use client"
+'use client'
 
-import React, { useState, useEffect } from 'react'
 import Link from 'next/link'
+import { type ReactNode, useCallback, useEffect, useState } from 'react'
 import {
-    GraduationCap,
-    Target,
-    BookOpen,
-    Chalkboard,
-    CheckCircle,
-    Clock,
-    PlusCircle,
-    Calendar,
-    TrendUp,
-    Trash,
-    LockSimple
-} from '@phosphor-icons/react'
-import { getSatDashboardDataAction, clearSatMetricsAction } from './actions'
+  AlertCircle,
+  ArrowRight,
+  BookOpen,
+  CalendarDays,
+  ChevronRight,
+  ClipboardList,
+  RotateCcw,
+  Sigma,
+  Target,
+  Timer,
+} from 'lucide-react'
+import toast from 'react-hot-toast'
+import ConfirmationModal from '@components/Objects/StyledElements/ConfirmationModal/ConfirmationModal'
+import TypeOfContentTitle from '@components/Objects/StyledElements/Titles/TypeOfContentTitle'
+import GeneralWrapperStyled from '@components/Objects/StyledElements/Wrappers/GeneralWrapper'
+import { cn } from '@/lib/utils'
+import {
+  clearSatMetricsAction,
+  type DomainMastery,
+  type FocusArea,
+  getSatDashboardDataAction,
+  type SectionStats,
+  type TestRun,
+} from './actions'
+import { SECTION_LABELS, type Section } from '@/lib/sat/sat'
+import {
+  Card,
+  primaryButton,
+  SignInCard,
+  SkeletonBlock,
+  StateCard,
+  secondaryButton,
+} from './_components/PracticeUI'
 
-function getLevelStyles(percentage: number) {
-    if (percentage < 60) {
-        return { barColor: 'bg-red-500', textColor: 'text-red-500', bgColor: 'bg-red-50' }
-    }
-    if (percentage >= 60 && percentage < 85) {
-        return { barColor: 'bg-amber-500', textColor: 'text-amber-500', bgColor: 'bg-amber-50' }
-    }
-    return { barColor: 'bg-green-500', textColor: 'text-green-500', bgColor: 'bg-green-50' }
+const TARGET_SCORE = 1540
+
+type Dashboard = Extract<Awaited<ReturnType<typeof getSatDashboardDataAction>>, { success: true }>
+type LoadState =
+  | { status: 'loading' }
+  | { status: 'unauthorized' }
+  | { status: 'error'; message: string }
+  | { status: 'ready'; data: Dashboard }
+
+const pct = (correct: number, total: number) =>
+  total > 0 ? Math.round((correct / total) * 100) : 0
+
+function accuracyTone(value: number) {
+  if (value >= 85) return { bar: 'bg-emerald-500', text: 'text-emerald-600' }
+  if (value >= 60) return { bar: 'bg-amber-400', text: 'text-amber-600' }
+  return { bar: 'bg-red-400', text: 'text-red-500' }
 }
 
-function getProficiencyTier(percentage: number) {
-    if (percentage < 60) {
-        return { label: 'Below Minimum', badgeStyle: 'bg-red-50 text-red-600 border border-red-200/60' }
+const formatDate = (iso: string, opts: Intl.DateTimeFormatOptions) =>
+  new Date(iso).toLocaleDateString('en-US', opts)
+
+export default function SatPracticeOverview() {
+  const [state, setState] = useState<LoadState>({ status: 'loading' })
+
+  const load = useCallback(async () => {
+    const res = await getSatDashboardDataAction()
+    if (res.unauthorized) return setState({ status: 'unauthorized' })
+    if (!res.success) return setState({ status: 'error', message: res.error })
+    setState({ status: 'ready', data: res })
+  }, [])
+
+  useEffect(() => {
+    load()
+  }, [load])
+
+  const reset = async () => {
+    const res = await clearSatMetricsAction()
+    if (res.success) {
+      toast.success('Practice history cleared')
+      load()
+    } else {
+      toast.error(res.unauthorized ? 'Please sign in again.' : res.error)
     }
-    if (percentage >= 60 && percentage < 85) {
-        return { label: 'Proficient', badgeStyle: 'bg-amber-50 text-amber-600 border border-amber-200/60' }
-    }
-    return { label: 'Outstanding', badgeStyle: 'bg-emerald-50 text-emerald-600 border border-emerald-200/60' }
-}
+  }
 
-export default function SatOverviewDashboard() {
-    const [isLoading, setIsLoading] = useState(true)
-    const [isUnauthorized, setIsUnauthorized] = useState(false)
-    const [currentScore, setCurrentScore] = useState(400)
-    const [targetScore] = useState(1540)
-    const [examWindowDate, setExamWindowDate] = useState("August 29, 2026")
-    const [tests, setTests] = useState<any[]>([])
-    const [blindspots, setBlindspots] = useState<any[]>([])
-    const [stats, setStats] = useState<any[]>([])
-    const [categories, setCategories] = useState<any[]>([])
-    const [sectionCardsData, setSectionCardsData] = useState<any[]>([])
+  const ready = state.status === 'ready'
 
-    const loadDashboardData = React.useCallback(async () => {
-        setIsLoading(true)
-        try {
-            const res = await getSatDashboardDataAction()
-
-            if (res.unauthorized) {
-                setIsUnauthorized(true)
-                return
-            }
-
-            if (res.success) {
-                setCurrentScore(res.currentScore || 400)
-                setTests(res.diagnosticRuns || [])
-                setBlindspots(res.blindspots || [])
-                if (res.examWindowDate) {
-                    setExamWindowDate(res.examWindowDate)
-                }
-
-                const totalQuestions = res.totalQuestions || 0
-                const engWeight = res.engScore ? Math.round(((res.engScore - 200) / 600) * 100) : 0
-                const mathWeight = res.mathScore ? Math.round(((res.mathScore - 200) / 600) * 100) : 0
-
-                setCategories([
-                    { label: 'Reading & Writing Accuracy', usage: engWeight },
-                    { label: 'Quantitative Math Accuracy', usage: mathWeight }
-                ])
-
-                setStats([
-                    { label: 'Dynamic Performance Volume', value: `${totalQuestions} Questions`, icon: CheckCircle, color: 'text-green-500', bg: 'bg-green-50 border border-green-100' }
-                ])
-
-                setSectionCardsData([
-                    {
-                        label: 'Reading & Writing',
-                        value: String(res.engScore || 200),
-                        sub: 'Live diagnostic calculation',
-                        icon: BookOpen,
-                        iconColor: 'text-blue-500',
-                        iconBg: 'bg-blue-50 border border-blue-100',
-                        href: '/practice/sat/questionnaire/english',
-                    },
-                    {
-                        label: 'Math Section',
-                        value: String(res.mathScore || 200),
-                        sub: 'Live diagnostic calculation',
-                        icon: Chalkboard,
-                        iconColor: 'text-indigo-500',
-                        iconBg: 'bg-indigo-50 border border-indigo-100',
-                        href: '/practice/sat/questionnaire/math',
-                    },
-                    {
-                        label: 'Total Diagnostic Attempt Profile',
-                        value: `${totalQuestions} Unlocked`,
-                        sub: 'All metrics pulled from production tables',
-                        icon: CheckCircle,
-                        iconColor: 'text-green-500',
-                        iconBg: 'bg-green-50 border border-green-100',
-                        href: ''
-                    },
-                ])
-            }
-        } catch (err) {
-            console.error("Failed loading backend diagnostic context layers", err)
-        } finally {
-            setIsLoading(false)
-        }
-    }, [])
-
-    useEffect(() => {
-        loadDashboardData()
-    }, [loadDashboardData])
-
-    const handleClearDashboard = async () => {
-        if (!confirm("Are you sure you want to permanently clear all metrics and test history from the database?")) return
-        try {
-            const res = await clearSatMetricsAction()
-            if (res.success) {
-                await loadDashboardData()
-            } else if (res.unauthorized) {
-                setIsUnauthorized(true)
-            } else {
-                alert("Could not process record deletion cascade.")
-            }
-        } catch (err) {
-            console.error(err)
-        }
-    }
-
-    if (isUnauthorized) {
-        return (
-            <div className="min-h-[70vh] w-full flex items-center justify-center bg-white px-4">
-                <div className="max-w-md w-full border border-gray-100 nice-shadow rounded-2xl p-8 text-center space-y-5">
-                    <div className="w-14 h-14 bg-gray-50 border border-gray-100 rounded-full flex items-center justify-center mx-auto text-gray-400">
-                        <LockSimple size={28} weight="bold" />
-                    </div>
-                    <div className="space-y-1.5">
-                        <h2 className="text-xl font-bold text-gray-900 tracking-tight">Access Restricted</h2>
-                        <p className="text-sm text-gray-400 leading-relaxed">
-                            Sorry, we can't provide this service to non-signed in users. Please sign in to establish an active practice test profile.
-                        </p>
-                    </div>
-                    <div>
-                        <Link
-                            href="/login"
-                            className="inline-flex w-full items-center justify-center px-4 py-2.5 text-xs font-semibold text-white bg-gray-900 rounded-xl hover:bg-gray-800 transition-colors"
-                        >
-                            Sign In to Account
-                        </Link>
-                    </div>
-                </div>
-            </div>
-        )
-    }
-
-    return (
-        <div className="h-full w-full bg-white">
-            <div className="px-4 sm:px-10 pt-8 pb-10">
-                <div className="space-y-6 max-w-[1600px] mx-auto w-full">
-
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                        <div>
-                            <h1 className="text-2xl font-bold text-gray-900 tracking-tight">
-                                SAT Prep Overview
-                            </h1>
-                            <p className="text-sm text-gray-400 mt-1">
-                                Track your metrics, manage practice runs, and close concept blindspots.
-                            </p>
-                        </div>
-                        <div className="flex items-center gap-2 flex-wrap">
-                            <Link
-                                href="/practice/sat/questionnaire/english"
-                                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium text-white bg-gray-900 rounded-lg hover:bg-gray-800 transition-colors"
-                            >
-                                <PlusCircle size={18} weight="bold" />
-                                Start Questionnaire
-                            </Link>
-
-                            <Link
-                                href="/practice/sat/questionnaire/english"
-                                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium text-gray-600 bg-white rounded-lg nice-shadow hover:bg-blue-50 hover:text-blue-600 transition-colors"
-                            >
-                                <BookOpen size={18} weight="bold" />
-                                English Questionnaire
-                            </Link>
-
-                            <Link
-                                href="/practice/sat/questionnaire/math"
-                                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium text-gray-600 bg-white rounded-lg nice-shadow hover:bg-indigo-50 hover:text-indigo-600 transition-colors"
-                            >
-                                <Chalkboard size={18} weight="bold" />
-                                Math Questionnaire
-                            </Link>
-
-                            <button
-                                onClick={handleClearDashboard}
-                                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium text-gray-600 bg-white rounded-lg nice-shadow hover:bg-red-50 hover:text-red-600 transition-colors duration-200 cursor-pointer"
-                            >
-                                <Trash size={18} weight="bold" />
-                                Clear Metrics
-                            </button>
-                        </div>
-                    </div>
-
-                    <ScoreProgressBarHero
-                        currentScore={currentScore}
-                        targetScore={targetScore}
-                        examWindowDate={examWindowDate}
-                        isLoading={isLoading}
-                    />
-
-                    <SatSectionCards cards={sectionCardsData} isLoading={isLoading} />
-
-                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                        <div className="lg:col-span-2 space-y-6">
-                            <RecentPracticeTests tests={tests} isLoading={isLoading} />
-                            <WeaknessDiagnosticList blindspots={blindspots} isLoading={isLoading} />
-                        </div>
-                        <div className="space-y-6">
-                            <SubscoreMeters categories={categories} isLoading={isLoading} />
-                            <StudyTimeQuickStats stats={stats} isLoading={isLoading} />
-                        </div>
-                    </div>
-
-                </div>
-            </div>
+  return (
+    <GeneralWrapperStyled>
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <TypeOfContentTitle title="SAT Practice" type="practice" />
         </div>
-    )
+        {ready && (
+          <div className="flex flex-wrap items-center gap-2 pb-2 sm:pb-0">
+            {state.data.totalAnswered > 0 && (
+              <ConfirmationModal
+                dialogTitle="Reset practice history?"
+                confirmationMessage="This permanently deletes every answer and practice test result on your account. Your score estimate starts over."
+                confirmationButtonText="Reset history"
+                status="warning"
+                functionToExecute={reset}
+                dialogTrigger={
+                  <button type="button" className={secondaryButton}>
+                    <RotateCcw size={15} />
+                    Reset
+                  </button>
+                }
+              />
+            )}
+            <Link href="/practice/sat/test" className={primaryButton}>
+              <Timer size={15} />
+              Start practice test
+            </Link>
+          </div>
+        )}
+      </div>
+
+      {state.status === 'loading' && <DashboardSkeleton />}
+      {state.status === 'unauthorized' && (
+        <SignInCard description="Sign in to track your estimated SAT score, practice by skill, and take timed practice tests." />
+      )}
+      {state.status === 'error' && (
+        <StateCard
+          icon={<AlertCircle size={20} />}
+          title="Couldn't load your progress"
+          description={state.message}
+        >
+          <button type="button" onClick={() => load()} className={primaryButton}>
+            Try again
+          </button>
+        </StateCard>
+      )}
+      {ready && <DashboardContent data={state.data} />}
+    </GeneralWrapperStyled>
+  )
 }
 
-function ScoreProgressBarHero({
-                                  currentScore,
-                                  targetScore,
-                                  examWindowDate,
-                                  isLoading
-                              }: {
-    currentScore: number,
-    targetScore: number,
-    examWindowDate: string,
-    isLoading: boolean
+function DashboardContent({ data }: { data: Dashboard }) {
+  return (
+    <div className="flex flex-col gap-4">
+      <ScoreHero data={data} />
+
+      <div className="grid gap-4 md:grid-cols-2">
+        <SectionCard
+          section="english"
+          stats={data.sections.english}
+          icon={<BookOpen size={18} />}
+        />
+        <SectionCard section="math" stats={data.sections.math} icon={<Sigma size={18} />} />
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-3">
+        <div className="flex flex-col gap-4 lg:col-span-2">
+          <FocusAreas areas={data.focusAreas} hasAnswers={data.totalAnswered > 0} />
+          <PracticeTests tests={data.tests} />
+        </div>
+        <div className="flex flex-col gap-4">
+          <SkillMastery mastery={data.mastery} />
+          <Activity data={data} />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ScoreHero({ data }: { data: Dashboard }) {
+  const score = data.estimatedScore
+  const position = ((score - 400) / 1200) * 100
+  const targetPosition = ((TARGET_SCORE - 400) / 1200) * 100
+  const daysAway = Math.max(0, Math.ceil((Date.parse(data.nextTestDate) - Date.now()) / 86_400_000))
+
+  return (
+    <Card className="grid gap-6 p-6 md:grid-cols-[minmax(0,1.6fr)_repeat(2,minmax(0,1fr))] lg:grid-cols-[minmax(0,1.6fr)_repeat(3,minmax(0,1fr))]">
+      <div className="space-y-3">
+        <p className="text-sm font-medium text-gray-500">Estimated score</p>
+        <div className="flex items-baseline gap-2">
+          <span className="text-4xl font-bold tracking-tight text-gray-900 tabular-nums">
+            {data.totalAnswered > 0 ? score : '—'}
+          </span>
+          <span className="text-sm text-gray-400">/ 1600</span>
+        </div>
+        <div className="space-y-1.5">
+          <div className="relative h-2 rounded-full bg-gray-100">
+            <div
+              className="absolute inset-y-0 left-0 rounded-full bg-black transition-all duration-700"
+              style={{ width: `${data.totalAnswered > 0 ? position : 0}%` }}
+            />
+            <div
+              className="absolute -top-1 h-4 w-0.5 rounded bg-gray-400"
+              style={{ left: `${targetPosition}%` }}
+              title={`Target ${TARGET_SCORE}`}
+            />
+          </div>
+          <div className="flex justify-between text-[11px] text-gray-400">
+            <span>400</span>
+            <span className="flex items-center gap-1">
+              <Target size={11} /> Target {TARGET_SCORE}
+            </span>
+            <span>1600</span>
+          </div>
+        </div>
+      </div>
+
+      <HeroStat label="Reading and Writing" value={data.sections.english} />
+      <HeroStat label="Math" value={data.sections.math} />
+
+      <div className="flex items-start gap-3 md:col-span-3 lg:col-span-1">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white nice-shadow text-gray-700">
+          <CalendarDays size={17} />
+        </div>
+        <div>
+          <p className="text-sm font-medium text-gray-500">Next SAT</p>
+          <p className="mt-0.5 font-semibold text-gray-900">
+            {formatDate(data.nextTestDate, { month: 'long', day: 'numeric', year: 'numeric' })}
+          </p>
+          <p className="text-xs text-gray-400">
+            {daysAway === 1 ? 'Tomorrow' : `in ${daysAway} days`}
+          </p>
+        </div>
+      </div>
+    </Card>
+  )
+}
+
+function HeroStat({ label, value }: { label: string; value: SectionStats }) {
+  return (
+    <div className="space-y-1">
+      <p className="text-sm font-medium text-gray-500">{label}</p>
+      <p className="text-2xl font-bold tracking-tight text-gray-900 tabular-nums">
+        {value.answered > 0 ? value.score : '—'}
+        <span className="ml-1 text-sm font-normal text-gray-400">/ 800</span>
+      </p>
+      <p className="text-xs text-gray-400">
+        {value.answered > 0
+          ? `${pct(value.correct, value.answered)}% of ${value.answered} correct`
+          : 'Not started'}
+      </p>
+    </div>
+  )
+}
+
+function SectionCard({
+  section,
+  stats,
+  icon,
+}: {
+  section: Section
+  stats: SectionStats
+  icon: ReactNode
 }) {
-    if (isLoading) {
-        return <div className="w-full bg-white h-32 rounded-xl nice-shadow animate-pulse" />
-    }
-
-    const progressPercent = Math.min(Math.round(((currentScore - 400) / (targetScore - 400)) * 100), 100)
-    const levels = getLevelStyles(progressPercent >= 0 ? progressPercent : 0)
-
-    return (
-        <div className="w-full bg-white rounded-xl nice-shadow p-6">
-            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
-
-                <div className="flex-1 space-y-4">
-                    <div className="flex flex-wrap items-end justify-between gap-4">
-                        <div className="flex items-center gap-8">
-                            <div>
-                                <div className="flex items-center gap-2 text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">
-                                    <GraduationCap size={16} className="text-blue-500" weight="duotone" />
-                                    Current Score
-                                </div>
-                                <div className="text-3xl font-bold text-gray-900 tracking-tight">
-                                    {currentScore}
-                                </div>
-                            </div>
-
-                            <div className="h-10 w-[1px] bg-gray-200 self-end mb-1 hidden sm:block" />
-
-                            <div>
-                                <div className="flex items-center gap-2 text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">
-                                    <Target size={16} className="text-rose-500" weight="duotone" />
-                                    Target Score
-                                </div>
-                                <div className="text-3xl font-bold text-gray-900 tracking-tight">
-                                    {targetScore}
-                                </div>
-                            </div>
-                        </div>
-
-                        {currentScore < targetScore ? (
-                            <div className="flex items-center gap-1.5 text-xs font-semibold text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-md border border-emerald-100">
-                                <TrendUp size={14} weight="bold" />
-                                <span>{targetScore - currentScore} points to goal reach</span>
-                            </div>
-                        ) : (
-                            <div className="flex items-center gap-1.5 text-xs font-semibold text-purple-600 bg-purple-50 px-2.5 py-1 rounded-md border border-purple-100">
-                                <CheckCircle size={14} weight="bold" />
-                                <span>Target achieved or surpassed!</span>
-                            </div>
-                        )}
-                    </div>
-
-                    <div className="space-y-1.5">
-                        <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                            <div
-                                className={`h-full rounded-full ${levels.barColor} transition-all duration-500 ease-out`}
-                                style={{ width: `${progressPercent >= 0 ? progressPercent : 0}%` }}
-                            />
-                        </div>
-                        <div className="flex justify-between text-[11px] font-medium text-gray-400 px-0.5">
-                            <span>Baseline (400)</span>
-                            <span className={`${levels.textColor} font-semibold`}>
-                                Current Level Progress: {progressPercent >= 0 ? progressPercent : 0}%
-                            </span>
-                            <span>Perfect (1600)</span>
-                        </div>
-                    </div>
-                </div>
-
-                <div className="hidden lg:block h-16 w-[1px] bg-gray-100" />
-
-                <div className="bg-white rounded-xl p-4 flex items-center gap-4 shrink-0 lg:w-72 border border-gray-100">
-                    <div className="w-12 h-12 rounded-lg bg-blue-50 border border-blue-100 flex items-center justify-center shrink-0">
-                        <Calendar size={24} weight="duotone" className="text-blue-500" />
-                    </div>
-                    <div className="min-w-0 soul-date-field">
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400 block">
-                            Next Target Exam Window
-                        </span>
-                        <span className="text-sm font-bold text-gray-800 block mt-0.5 truncate">
-                            {examWindowDate}
-                        </span>
-                        <span className="text-xs text-blue-500 font-medium block mt-0.5">
-                            Official National Test
-                        </span>
-                    </div>
-                </div>
-
-            </div>
-        </div>
-    )
+  const accuracy = pct(stats.correct, stats.answered)
+  return (
+    <Link
+      href={`/practice/sat/questionnaire/${section}`}
+      className="group flex items-center gap-4 rounded-xl bg-white p-5 nice-shadow transition-colors hover:bg-gray-50"
+    >
+      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-white nice-shadow text-gray-800">
+        {icon}
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="font-semibold text-gray-900">{SECTION_LABELS[section]}</p>
+        <p className="text-sm text-gray-500">
+          {stats.answered > 0
+            ? `${stats.answered} answered · ${accuracy}% correct`
+            : section === 'english'
+              ? 'Craft, ideas, conventions and expression'
+              : 'Algebra, advanced math, data analysis and geometry'}
+        </p>
+      </div>
+      <span className="flex items-center gap-1 text-sm font-medium text-gray-700 group-hover:text-black">
+        {stats.answered > 0 ? 'Continue' : 'Start'}
+        <ArrowRight size={15} className="transition-transform group-hover:translate-x-0.5" />
+      </span>
+    </Link>
+  )
 }
 
-function SatSectionCards({ cards, isLoading }: { cards: any[], isLoading: boolean }) {
-    if (isLoading) {
-        return <div className="h-24 w-full bg-slate-100 rounded-xl animate-pulse" />
-    }
+function CardHeader({ title, description }: { title: string; description?: string }) {
+  return (
+    <div className="border-b border-gray-100 px-5 py-4">
+      <h2 className="font-semibold text-gray-900">{title}</h2>
+      {description && <p className="mt-0.5 text-xs text-gray-500">{description}</p>}
+    </div>
+  )
+}
 
-    return (
-        <div className="w-full grid gap-3 grid-cols-1 sm:grid-cols-2 md:grid-cols-3">
-            {cards.map((card) => {
-                const Content = (
-                    <>
-                        <div>
-                            <div className="flex items-center gap-2 mb-2">
-                                <div className={`p-1.5 rounded-md ${card.iconBg} flex items-center justify-center shrink-0`}>
-                                    <card.icon size={18} weight="duotone" className={card.iconColor} />
-                                </div>
-                                <span className="text-sm font-medium text-gray-400 truncate">
-                                    {card.label}
-                                </span>
-                            </div>
-                            <div className="text-3xl font-bold text-gray-900 tracking-tight">{card.value}</div>
-                        </div>
-                        <p className="text-sm text-gray-400 mt-2 whitespace-nowrap overflow-hidden text-ellipsis">
-                            {card.sub}
-                        </p>
-                    </>
-                )
+function EmptyNote({ children }: { children: ReactNode }) {
+  return (
+    <div className="m-5 rounded-xl border-2 border-dashed border-gray-100 bg-gray-50/30 px-4 py-8 text-center text-sm text-gray-500">
+      {children}
+    </div>
+  )
+}
 
-                const classStyles = "w-full bg-white rounded-xl nice-shadow px-4 py-3.5 hover:bg-gray-50 transition-colors group flex flex-col justify-between"
+function FocusAreas({ areas, hasAnswers }: { areas: FocusArea[]; hasAnswers: boolean }) {
+  return (
+    <Card>
+      <CardHeader title="Focus areas" description="Skills where you've missed the most questions" />
+      {areas.length === 0 ? (
+        <EmptyNote>
+          {hasAnswers
+            ? 'No weak spots yet — keep practicing and they’ll show up here.'
+            : 'Answer a few questions and we’ll point out the skills that need work.'}
+        </EmptyNote>
+      ) : (
+        <ul className="divide-y divide-gray-50">
+          {areas.map((area) => {
+            const missedPct = pct(area.missed, area.attempted)
+            return (
+              <li key={`${area.section}-${area.skill}`}>
+                <Link
+                  href={area.href}
+                  className="group flex items-center gap-4 px-5 py-3.5 transition-colors hover:bg-gray-50"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="font-medium text-gray-900">{area.label}</p>
+                      <span className="rounded-md bg-gray-100 px-1.5 py-0.5 text-[11px] font-medium text-gray-600">
+                        {area.section === 'math' ? 'Math' : 'R&W'}
+                      </span>
+                    </div>
+                    <p className="text-xs text-gray-500">{area.domain}</p>
+                  </div>
+                  <div className="hidden w-32 sm:block">
+                    <div className="h-1.5 overflow-hidden rounded-full bg-gray-100">
+                      <div
+                        className="h-full rounded-full bg-red-400"
+                        style={{ width: `${missedPct}%` }}
+                      />
+                    </div>
+                  </div>
+                  <span className="w-24 text-right text-xs tabular-nums text-gray-500">
+                    {area.missed} of {area.attempted} missed
+                  </span>
+                  <ChevronRight size={16} className="text-gray-300 group-hover:text-gray-600" />
+                </Link>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </Card>
+  )
+}
 
-                if (card.href) {
-                    return (
-                        <Link key={card.label} href={card.href} className={classStyles}>
-                            {Content}
-                        </Link>
-                    )
-                }
+function PracticeTests({ tests }: { tests: TestRun[] }) {
+  return (
+    <Card>
+      <CardHeader title="Practice tests" description="Timed Reading and Writing + Math modules" />
+      {tests.length === 0 ? (
+        <EmptyNote>
+          <p>You haven&apos;t taken a practice test yet.</p>
+          <Link href="/practice/sat/test" className={cn(primaryButton, 'mt-4')}>
+            <Timer size={15} />
+            Take your first test
+          </Link>
+        </EmptyNote>
+      ) : (
+        <ul className="divide-y divide-gray-50">
+          {tests.map((test) => (
+            <li key={test.id} className="flex items-center gap-4 px-5 py-3.5">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white nice-shadow text-gray-600">
+                <ClipboardList size={16} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="font-medium text-gray-900">
+                  {formatDate(test.completedAt, {
+                    month: 'short',
+                    day: 'numeric',
+                    year: 'numeric',
+                  })}
+                </p>
+                <p className="text-xs text-gray-500">
+                  R&amp;W {test.rwScore} · Math {test.mathScore} · {test.correct}/{test.total}{' '}
+                  correct
+                </p>
+              </div>
+              <span className="text-lg font-bold tabular-nums text-gray-900">
+                {test.totalScore}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
+  )
+}
 
+function SkillMastery({ mastery }: { mastery: DomainMastery[] }) {
+  return (
+    <Card>
+      <CardHeader title="Skill mastery" description="Accuracy by SAT content domain" />
+      <div className="space-y-5 p-5">
+        {(['english', 'math'] as Section[]).map((section) => (
+          <div key={section} className="space-y-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">
+              {SECTION_LABELS[section]}
+            </p>
+            {mastery
+              .filter((m) => m.section === section)
+              .map((m) => {
+                const value = pct(m.correct, m.answered)
+                const tone = accuracyTone(value)
                 return (
-                    <div key={card.label} className={classStyles}>
-                        {Content}
+                  <div key={m.domain} className="space-y-1">
+                    <div className="flex items-center justify-between gap-2 text-sm">
+                      <span className="truncate text-gray-700">{m.label}</span>
+                      <span
+                        className={cn(
+                          'shrink-0 text-xs font-semibold tabular-nums',
+                          m.answered ? tone.text : 'text-gray-300'
+                        )}
+                      >
+                        {m.answered ? `${value}%` : '—'}
+                      </span>
                     </div>
+                    <div className="h-1.5 overflow-hidden rounded-full bg-gray-100">
+                      <div
+                        className={cn('h-full rounded-full transition-all duration-500', tone.bar)}
+                        style={{ width: `${m.answered ? value : 0}%` }}
+                      />
+                    </div>
+                  </div>
                 )
-            })}
-        </div>
-    )
+              })}
+          </div>
+        ))}
+      </div>
+    </Card>
+  )
 }
 
-function RecentPracticeTests({ tests, isLoading }: { tests: any[], isLoading: boolean }) {
-    if (isLoading) return <div className="h-48 w-full bg-slate-100 rounded-xl animate-pulse" />
-
-    return (
-        <div className="w-full bg-white rounded-xl nice-shadow overflow-hidden">
-            <div className="flex items-center justify-between px-6 pt-6 pb-3">
-                <h2 className="text-md font-semibold text-gray-700">Recent Practice Performance</h2>
-            </div>
-            <div className="divide-y divide-gray-50">
-                {tests.length === 0 ? (
-                    <div className="p-6 text-center text-sm text-gray-400">
-                        No metric history recorded. Complete a reading/writing or math session to build a profile.
-                    </div>
-                ) : (
-                    tests.map((test) => (
-                        <div key={test.id} className="flex items-center gap-3 px-6 py-3.5 hover:bg-gray-50 transition-colors group">
-                            <div className="w-9 h-9 rounded-md bg-green-50 border border-green-100 shrink-0 flex items-center justify-center">
-                                <CheckCircle size={18} weight="duotone" className="text-green-500" />
-                            </div>
-                            <div className="flex-1 min-w-0">
-                                <p className="text-sm font-medium text-gray-700 truncate">{test.name}</p>
-                                <div className="flex items-center gap-3 mt-0.5">
-                                    <span className="flex items-center gap-1 text-[11px] text-gray-400">
-                                        <Clock size={16} /> {test.date}
-                                    </span>
-                                    <span className="text-[11px] text-gray-400">{test.breakdown}</span>
-                                </div>
-                            </div>
-                            <div className="text-right shrink-0">
-                                <span className="text-sm font-bold text-gray-900 block">{test.score}</span>
-                                <span className="text-[10px] text-gray-400 block font-medium uppercase tracking-wider">{test.status}</span>
-                            </div>
-                        </div>
-                    ))
-                )}
-            </div>
-        </div>
-    )
+function Activity({ data }: { data: Dashboard }) {
+  const rows = [
+    { label: 'Questions answered', value: data.totalAnswered.toLocaleString() },
+    {
+      label: 'Overall accuracy',
+      value: data.totalAnswered ? `${pct(data.totalCorrect, data.totalAnswered)}%` : '—',
+    },
+    { label: 'Practice tests taken', value: String(data.tests.length) },
+  ]
+  return (
+    <Card>
+      <CardHeader title="Activity" />
+      <dl className="divide-y divide-gray-50">
+        {rows.map((row) => (
+          <div key={row.label} className="flex items-center justify-between px-5 py-3 text-sm">
+            <dt className="text-gray-500">{row.label}</dt>
+            <dd className="font-semibold tabular-nums text-gray-900">{row.value}</dd>
+          </div>
+        ))}
+      </dl>
+    </Card>
+  )
 }
 
-function SubscoreMeters({ categories, isLoading }: { categories: any[], isLoading: boolean }) {
-    if (isLoading) return <div className="h-32 w-full bg-slate-100 rounded-xl animate-pulse" />
-
-    return (
-        <div className="bg-white rounded-xl nice-shadow p-5">
-            <div className="flex items-center justify-between mb-4">
-                <h3 className="text-md font-semibold text-gray-700">Domain Mastery Profile</h3>
-            </div>
-            <div className="space-y-5">
-                {categories.length === 0 ? (
-                    <p className="text-xs text-gray-400">Awaiting system statistics data integration.</p>
-                ) : (
-                    categories.map((cat) => {
-                        const theme = getLevelStyles(cat.usage)
-                        const tier = getProficiencyTier(cat.usage)
-                        return (
-                            <div key={cat.label} className="space-y-1.5">
-                                <div className="flex items-center justify-between gap-2">
-                                    <span className="text-sm font-medium text-gray-600 truncate max-w-[180px]">
-                                        {cat.label}
-                                    </span>
-                                    <div className="flex items-center gap-2 shrink-0">
-                                        <span className={`text-xs font-semibold px-2 py-0.5 rounded-md ${tier.badgeStyle}`}>
-                                            {tier.label}
-                                        </span>
-                                        <span className={`text-sm font-bold tabular-nums ${theme.textColor}`}>
-                                            {cat.usage}%
-                                        </span>
-                                    </div>
-                                </div>
-                                <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                                    <div
-                                        className={`h-full rounded-full transition-all duration-500 ${theme.barColor}`}
-                                        style={{ width: `${cat.usage}%` }}
-                                    />
-                                </div>
-                            </div>
-                        )
-                    })
-                )}
-            </div>
+function DashboardSkeleton() {
+  return (
+    <div className="flex flex-col gap-4">
+      <SkeletonBlock className="h-36" />
+      <div className="grid gap-4 md:grid-cols-2">
+        <SkeletonBlock className="h-20" />
+        <SkeletonBlock className="h-20" />
+      </div>
+      <div className="grid gap-4 lg:grid-cols-3">
+        <div className="flex flex-col gap-4 lg:col-span-2">
+          <SkeletonBlock className="h-56" />
+          <SkeletonBlock className="h-40" />
         </div>
-    )
-}
-
-function WeaknessDiagnosticList({ blindspots, isLoading }: { blindspots: any[], isLoading: boolean }) {
-    const [selectedTab, setSelectedTab] = useState<'All' | 'English' | 'Math'>('All')
-
-    const aggregatedDomains = React.useMemo(() => {
-        const domainMap = new Map<string, {
-            id: string
-            subject: string
-            concept: string
-            count: number
-            targetPath: string
-            type: string
-            style: string
-        }>()
-
-        blindspots.forEach((spot) => {
-            const subject = spot.subject || 'General'
-            const concept = spot.concept || 'Core Concept'
-            const key = `${subject.toLowerCase()}-${concept.toLowerCase()}`
-
-            if (domainMap.has(key)) {
-                const existing = domainMap.get(key)!
-                existing.count += 1
-            } else {
-                domainMap.set(key, {
-                    id: key,
-                    subject,
-                    concept,
-                    count: 1,
-                    targetPath: spot.targetPath || `/practice/sat/questionnaire/${subject.toLowerCase().includes('math') ? 'math' : 'english'}?concept=${encodeURIComponent(concept)}`,
-                    type: spot.type || 'Focus Area',
-                    style: spot.style || 'bg-amber-50 text-amber-700 border border-amber-200/60'
-                })
-            }
-        })
-
-        return Array.from(domainMap.values())
-    }, [blindspots])
-
-    const filteredDomains = React.useMemo(() => {
-        if (selectedTab === 'All') return aggregatedDomains
-        return aggregatedDomains.filter((d) => {
-            const subj = d.subject.toLowerCase()
-            if (selectedTab === 'English') {
-                return subj.includes('english') || subj.includes('reading') || subj.includes('writing')
-            }
-            if (selectedTab === 'Math') {
-                return subj.includes('math') || subj.includes('quant') || subj.includes('algebra')
-            }
-            return true
-        })
-    }, [aggregatedDomains, selectedTab])
-
-    if (isLoading) return <div className="h-40 w-full bg-slate-100 rounded-xl animate-pulse" />
-
-    return (
-        <div className="bg-white rounded-xl nice-shadow overflow-hidden">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between px-6 pt-6 pb-3 gap-3 border-b border-gray-100">
-                <div>
-                    <h3 className="text-md font-semibold text-gray-700">Target Focus Recommendations</h3>
-                    <p className="text-xs text-gray-400 mt-0.5">Categorized domain areas needing targeted practice</p>
-                </div>
-
-                <div className="flex items-center gap-1 bg-gray-100 p-1 rounded-md self-start sm:self-auto">
-                    {(['All', 'English', 'Math'] as const).map((tab) => (
-                        <button
-                            key={tab}
-                            onClick={() => setSelectedTab(tab)}
-                            className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors ${
-                                selectedTab === tab
-                                    ? 'bg-white text-gray-900 shadow-sm'
-                                    : 'text-gray-500 hover:text-gray-800'
-                            }`}
-                        >
-                            {tab}
-                        </button>
-                    ))}
-                </div>
-            </div>
-
-            <div className="divide-y divide-gray-50">
-                {filteredDomains.length === 0 ? (
-                    <div className="p-6 text-center text-sm text-gray-400">
-                        {blindspots.length === 0
-                            ? "Excellent performance context! Zero active weakness areas to review."
-                            : `No active focus areas found under the "${selectedTab}" domain filter.`}
-                    </div>
-                ) : (
-                    filteredDomains.map((domain) => (
-                        <Link
-                            key={domain.id}
-                            href={domain.targetPath}
-                            className="flex items-center justify-between gap-3 px-6 py-4 hover:bg-slate-50 transition-colors group cursor-pointer"
-                        >
-                            <div className="flex items-start gap-3 min-w-0">
-                                <div className="w-2 h-2 rounded-full bg-red-400 shrink-0 mt-1.5" />
-                                <div className="min-w-0">
-                                    <div className="flex items-center gap-2 flex-wrap">
-                                        <p className="text-sm font-semibold text-gray-800 truncate group-hover:text-blue-600 transition-colors">
-                                            {domain.concept}
-                                        </p>
-                                        <span className="text-[10px] uppercase font-semibold tracking-wider px-2 py-0.5 bg-gray-100 text-gray-600 rounded-md">
-                                            {domain.subject}
-                                        </span>
-                                    </div>
-                                    <p className="text-xs text-gray-400 mt-1">
-                                        Click to enter target practice mode for this domain
-                                    </p>
-                                </div>
-                            </div>
-
-                            <div className="flex items-center gap-3 shrink-0">
-                                <span className="text-xs font-semibold bg-red-50 text-red-600 border border-red-200/60 px-2.5 py-1 rounded-md">
-                                    {domain.count} {domain.count === 1 ? 'Missed Question' : 'Missed Questions'}
-                                </span>
-                                <span className={`hidden sm:inline-block text-xs font-semibold px-2.5 py-1 rounded-md ${domain.style}`}>
-                                    {domain.type}
-                                </span>
-                            </div>
-                        </Link>
-                    ))
-                )}
-            </div>
-        </div>
-    )
-}
-
-function StudyTimeQuickStats({ stats, isLoading }: { stats: any[], isLoading: boolean }) {
-    if (isLoading) return <div className="h-20 w-full bg-slate-100 rounded-xl animate-pulse" />
-
-    return (
-        <div className="bg-white rounded-xl nice-shadow p-5">
-            <div className="flex items-center justify-between mb-4">
-                <h3 className="text-md font-semibold text-gray-700">Preparation Volume</h3>
-            </div>
-            <div className="space-y-3">
-                {stats.length === 0 ? (
-                    <div className="text-xs text-slate-400">No active attempts data mapped.</div>
-                ) : (
-                    stats.map((stat) => (
-                        <div key={stat.label} className="flex items-center justify-between">
-                            <div className="flex items-center gap-2.5">
-                                <div className={`p-1.5 rounded-md ${stat.bg} flex items-center justify-center shrink-0`}>
-                                    <stat.icon size={18} weight="duotone" className={stat.color} />
-                                </div>
-                                <span className="text-sm text-gray-500">{stat.label}</span>
-                            </div>
-                            <span className="text-sm font-bold text-gray-900 tabular-nums">{stat.value}</span>
-                        </div>
-                    ))
-                )}
-            </div>
-        </div>
-    )
+        <SkeletonBlock className="h-96" />
+      </div>
+    </div>
+  )
 }

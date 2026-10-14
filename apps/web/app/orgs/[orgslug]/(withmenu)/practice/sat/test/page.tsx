@@ -1,1250 +1,756 @@
-"use client"
+'use client'
 
-import React, { useState, useEffect, useRef, Suspense } from 'react'
-import { useSearchParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { InlineMath, BlockMath } from 'react-katex'
-import 'katex/dist/katex.min.css'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { GraduationCap } from '@phosphor-icons/react'
 import {
-    Clock,
-    ArrowLeft,
-    ArrowRight,
-    Calculator,
-    XCircle,
-    Minus,
-    HandGrabbing,
-    CaretDown,
-    CaretUp,
-    ListChecks,
-    BookmarkSimple,
-    Flag
-} from '@phosphor-icons/react'
-import { getQuestionsAction, submitAttemptAction, submitTestSessionAction } from './actions'
-
-interface Option {
-    id: string
-    key: string
-    text: string
-}
-
-interface Question {
-    id: string
-    stimulus: string | LexicalRoot
-    options: Option[]
-    answer: string
-    explanation: string | LexicalRoot
-    section: 'english' | 'math'
-    domain?: string
-    topic?: string
-    difficulty: 'easy' | 'medium' | 'hard'
-}
-
-interface LexicalNode {
-    type: string
-    format?: number
-    text?: string
-    value?: any
-    src?: string
-    url?: string
-    alt?: string
-    children?: LexicalNode[]
-}
-
-interface LexicalRoot {
-    root?: {
-        children?: LexicalNode[]
-    }
-}
-
-const checkIsCorrect = (q: Question, selectedKey: string | undefined): boolean => {
-    if (!selectedKey) return false
-
-    const cleanAnswer = q.answer.trim().toLowerCase()
-    const cleanKey = selectedKey.trim().toLowerCase()
-
-    const selectedOption = q.options.find(o => o.key.toLowerCase() === cleanKey)
-    if (!selectedOption) return false
-
-    const cleanOptionText = selectedOption.text.trim().toLowerCase()
-
-    if (cleanKey === cleanAnswer) return true
-    if (cleanOptionText === cleanAnswer) return true
-    if (selectedOption.id.toLowerCase() === cleanAnswer) return true
-
-    const structuralAnswerMatch = cleanAnswer.replace(/[\$\\]/g, '')
-    const structuralOptionMatch = cleanOptionText.replace(/[\$\\]/g, '')
-    if (structuralOptionMatch === structuralAnswerMatch || structuralOptionMatch === cleanAnswer) return true
-
-    const correctOption = q.options.find(o =>
-        o.key.toLowerCase() === cleanAnswer ||
-        o.text.trim().toLowerCase() === cleanAnswer ||
-        o.id.toLowerCase() === cleanAnswer
-    )
-    if (correctOption && correctOption.key.toLowerCase() === cleanKey) return true
-
-    return false
-}
-
-const renderTextWithMath = (text: string) => {
-    if (!text) return ''
-
-    let sanitized = text
-    sanitized = sanitized.replace(/\\\[([\s\S]*?)\\\]/g, '$$$$$1$$$$')
-    sanitized = sanitized.replace(/\\\(([\s\S]*?)\\\)/g, '$$$1$$')
-    sanitized = sanitized.replace(/(?<!\$)\\[a-zA-Z]+(?:\{[^{} ]*\}|\[[^[\] ]*\]|)*(?!\$)/g, '$$$&$$')
-
-    const blocks = sanitized.split('$$')
-    return blocks.map((block, blockIndex) => {
-        if (blockIndex % 2 === 1) {
-            return (
-                <div key={blockIndex} className="my-3 overflow-x-auto">
-                    <BlockMath
-                        math={block}
-                        renderError={() => <span className="text-slate-700 font-medium">{block}</span>}
-                    />
-                </div>
-            )
-        }
-        const inlines = block.split('$')
-        return inlines.map((inline, inlineIndex) => {
-            if (inlineIndex % 2 === 1) {
-                return (
-                    <InlineMath
-                        key={inlineIndex}
-                        math={inline}
-                        renderError={() => <span className="text-slate-700 font-medium">{inline}</span>}
-                    />
-                )
-            }
-            return inline
-        })
-    })
-}
-
-const renderStringWithImagesAndMath = (text: string) => {
-    if (!text) return null
-
-    const imgRegex = /<img\s+[^>]*src=["']([^"']+)["'][^>]*>|!\[([^\]]*)\]\(([^)]+)\)/gi
-    const parts: React.ReactNode[] = []
-    let lastIndex = 0
-    let match: RegExpExecArray | null
-
-    while ((match = imgRegex.exec(text)) !== null) {
-        if (match.index > lastIndex) {
-            parts.push(renderTextWithMath(text.substring(lastIndex, match.index)))
-        }
-
-        const src = match[1] || match[3]
-        const alt = match[2] || 'Stimulus visual'
-        const payloadUrl = process.env.NEXT_PUBLIC_LEARNHOUSE_PAYLOAD_URL || ''
-        const imageUrl = src.startsWith('http') ? src : `${payloadUrl}${src}`
-
-        parts.push(
-            <div key={match.index} className="my-4 flex justify-center items-center w-full">
-                <img
-                    src={imageUrl}
-                    alt={alt}
-                    className="max-w-full max-h-80 object-contain rounded-lg border border-slate-200 shadow-sm mx-auto block"
-                />
-            </div>
-        )
-
-        lastIndex = imgRegex.lastIndex
-    }
-
-    if (lastIndex < text.length) {
-        parts.push(renderTextWithMath(text.substring(lastIndex)))
-    }
-
-    return parts
-}
-
-const renderLexicalNode = (node: LexicalNode, index: number): React.ReactNode => {
-    if (!node) return null
-
-    if (node.type === 'upload' || node.type === 'image') {
-        const rawUrl = node.value?.url || node.src || node.url
-        if (rawUrl) {
-            const payloadUrl = process.env.NEXT_PUBLIC_LEARNHOUSE_PAYLOAD_URL || ''
-            const imageUrl = rawUrl.startsWith('http') ? rawUrl : `${payloadUrl}${rawUrl}`
-            return (
-                <div key={index} className="my-4 flex justify-center items-center w-full">
-                    <img
-                        src={imageUrl}
-                        alt={node.value?.alt || node.alt || 'Stimulus visual'}
-                        className="max-w-full max-h-80 object-contain rounded-lg border border-slate-200 shadow-sm mx-auto block"
-                    />
-                </div>
-            )
-        }
-    }
-
-    if (node.type === 'paragraph') {
-        return (
-            <p key={index} className="mb-4 text-slate-700 leading-relaxed text-sm">
-                {node.children?.map((child, childIdx) => renderLexicalNode(child, childIdx))}
-            </p>
-        )
-    }
-
-    if (node.text !== undefined) {
-        const content = renderTextWithMath(node.text || '')
-        if (node.format === 1) {
-            return <span key={index} className="font-semibold text-slate-900">{content}</span>
-        }
-        return <React.Fragment key={index}>{content}</React.Fragment>
-    }
-
-    if (node.children && node.children.length > 0) {
-        return (
-            <div key={index}>
-                {node.children.map((child, childIdx) => renderLexicalNode(child, childIdx))}
-            </div>
-        )
-    }
-
-    return null
-}
-
-const renderLexicalOrText = (content: string | LexicalRoot | null | undefined): React.ReactNode => {
-    if (!content) return null
-    if (typeof content === 'string') {
-        return renderStringWithImagesAndMath(content)
-    }
-
-    try {
-        if (content.root?.children) {
-            return content.root.children.map((node: LexicalNode, childIndex: number) =>
-                renderLexicalNode(node, childIndex)
-            )
-        }
-    } catch {
-        return <p className="text-slate-400 text-sm italic">Error parsing structure content</p>
-    }
-    return null
-}
-
-const calculateSatScore = (englishCorrect: number, englishTotal: number, mathCorrect: number, mathTotal: number) => {
-    if (englishTotal === 0 && mathTotal === 0) {
-        return { rwScore: 0, mathScore: 0, totalScore: 0 }
-    }
-    const minScore = 200
-    const maxScore = 800
-    const rwPercent = englishTotal > 0 ? englishCorrect / englishTotal : 0
-    const mathPercent = mathTotal > 0 ? mathCorrect / mathTotal : 0
-    const rwScore = Math.round(minScore + (maxScore - minScore) * rwPercent)
-    const mathScore = Math.round(minScore + (maxScore - minScore) * mathPercent)
-    return {
-        rwScore: Math.min(800, Math.max(200, rwScore)),
-        mathScore: Math.min(800, Math.max(200, mathScore)),
-        totalScore: Math.min(1600, Math.max(400, rwScore + mathScore))
-    }
-}
-
-function PracticeTestController() {
-    const searchParams = useSearchParams()
-    const router = useRouter()
-    const isNewTest = searchParams.get('new') === 'true'
-
-    const isProd = process.env.NODE_ENV === 'production'
-    const section1Duration = isProd ? 600 : 60
-    const section2Duration = isProd ? 600 : 120
-    const breakDuration = isProd ? 600 : 10
-
-    const [testSessionId, setTestSessionId] = useState<string>('')
-    const [questions, setQuestions] = useState<Question[]>([])
-    const [isLoading, setIsLoading] = useState(true)
-    const [isUnauthorized, setIsUnauthorized] = useState(false)
-
-    const [currentSection, setCurrentSection] = useState<1 | 2>(1)
-    const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0)
-
-    const [selectedAnswers, setSelectedAnswers] = useState<Record<string, string>>({})
-    const [flaggedQuestions, setFlaggedQuestions] = useState<Record<string, boolean>>({})
-    const [eliminatedOptions, setEliminatedOptions] = useState<Record<string, string[]>>({})
-    const [isEliminatorActive, setIsEliminatorActive] = useState(false)
-    const [isTimerHidden, setIsTimerHidden] = useState(false)
-    const [isSavingAnswer, setIsSavingAnswer] = useState<Record<string, boolean>>({})
-
-    const [timeLeft, setTimeLeft] = useState(section1Duration)
-    const [isSubmitted, setIsSubmitted] = useState(false)
-    const [isOnBreak, setIsOnBreak] = useState(false)
-    const [isPaused, setIsPaused] = useState(false)
-    const [breakTimeLeft, setBreakTimeLeft] = useState(breakDuration)
-
-    const [isDesmosOpen, setIsDesmosOpen] = useState(false)
-    const [isDesmosMinimized, setIsDesmosMinimized] = useState(false)
-    const [desmosPosition, setDesmosPosition] = useState({ x: 160, y: 120 })
-    const [desmosSize, setDesmosSize] = useState({ width: 540, height: 460 })
-    const [isDragging, setIsDragging] = useState(false)
-    const [isResizing, setIsResizing] = useState(false)
-
-    const [review, setReview] = useState(false)
-    const [reveal, setReveal] = useState<Record<string, boolean>>({})
-    const [wait, setWait] = useState(false)
-    const [report, setReport] = useState(false)
-
-    const dragStart = useRef({ x: 0, y: 0 })
-    const resizeStart = useRef({ width: 0, height: 0, x: 0, y: 0 })
-    const calculatorReference = useRef<HTMLDivElement>(null)
-
-    useEffect(() => {
-        if (!isNewTest) return
-
-        setTestSessionId(crypto.randomUUID())
-
-        async function fetchQuestions() {
-            try {
-                const data = await getQuestionsAction()
-
-                if (!data.success && data.error === "Unauthorized session context") {
-                    setIsUnauthorized(true)
-                    setIsLoading(false)
-                    return
-                }
-
-                if (data.success && data.docs && data.docs.length > 0) {
-                    const uniqueMap = new Map<string, any>()
-
-                    data.docs.forEach((doc: any) => {
-                        if (doc && doc.id) {
-                            uniqueMap.set(String(doc.id), doc)
-                        }
-                    })
-
-                    const allItems: Question[] = Array.from(uniqueMap.values()).map((doc: any) => {
-                        let sectionName: 'english' | 'math' = 'english'
-                        let rawSectionStr = ''
-
-                        if (doc.section) {
-                            if (typeof doc.section === 'object') {
-                                rawSectionStr = String(doc.section.slug || doc.section.name || doc.section.title || doc.section.id || '')
-                            } else {
-                                rawSectionStr = String(doc.section)
-                            }
-                        }
-
-                        const cleanSec = rawSectionStr.toLowerCase().trim()
-
-                        if (cleanSec.includes('math') || cleanSec.includes('calc') || cleanSec.includes('algebra') || cleanSec.includes('geom')) {
-                            sectionName = 'math'
-                        } else if (cleanSec.includes('english') || cleanSec.includes('read') || cleanSec.includes('writ') || cleanSec.includes('lang') || cleanSec.includes('lit') || cleanSec.includes('verbal') || cleanSec.includes('rw')) {
-                            sectionName = 'english'
-                        } else {
-                            const metadataStr = (String(doc.domain || '') + String(doc.topic || '') + String(doc.answer || '')).toLowerCase()
-                            const isMathMatch = metadataStr.includes('math') ||
-                                metadataStr.includes('algebra') ||
-                                metadataStr.includes('geometry') ||
-                                (String(doc.answer).length < 10 && /[\d%+\-*\/=\\]/.test(String(doc.answer)))
-
-                            sectionName = isMathMatch ? 'math' : 'english'
-                        }
-
-                        const alpha = ['A', 'B', 'C', 'D']
-                        const seenTexts = new Set<string>()
-                        const choices: Option[] = []
-                        const rawOptions = doc.options || []
-                        let addedIndex = 0
-
-                        for (let i = 0; i < rawOptions.length; i++) {
-                            const opt = rawOptions[i]
-                            const textVal = opt && typeof opt === 'object' ? String(opt.text || '') : String(opt)
-                            const cleanText = textVal.trim()
-
-                            if (seenTexts.has(cleanText)) continue
-                            seenTexts.add(cleanText)
-
-                            if (addedIndex < 4) {
-                                choices.push({
-                                    id: String(opt && typeof opt === 'object' ? (opt.id || i) : i),
-                                    key: alpha[addedIndex],
-                                    text: cleanText
-                                })
-                                addedIndex++
-                            }
-                        }
-
-                        while (choices.length < 4) {
-                            const fallbackLabel = alpha[choices.length]
-                            choices.push({
-                                id: `fallback-${fallbackLabel}-${doc.id}`,
-                                key: fallbackLabel,
-                                text: `Optional Parameter ${fallbackLabel}`
-                            })
-                        }
-
-                        return {
-                            id: String(doc.id),
-                            stimulus: doc.stimulus,
-                            options: choices,
-                            answer: String(doc.answer || '').trim(),
-                            explanation: doc.explanation,
-                            section: sectionName,
-                            domain: doc.domain,
-                            topic: doc.topic,
-                            difficulty: doc.difficulty || 'medium'
-                        }
-                    })
-
-                    const englishSectionPool = allItems.filter(q => q.section === 'english').slice(0, 27)
-                    const mathSectionPool = allItems.filter(q => q.section === 'math').slice(0, 22)
-
-                    setQuestions([...englishSectionPool, ...mathSectionPool])
-                } else if (!data.success) {
-                    throw new Error(data.error || 'Failed to fetch questions')
-                }
-            } catch (error: unknown) {
-                console.error(error)
-            } finally {
-                setIsLoading(false)
-            }
-        }
-
-        fetchQuestions()
-    }, [isNewTest])
-
-    useEffect(() => {
-        if (questions.length > 0) {
-            const hasEnglish = questions.some(q => q.section === 'english')
-            const hasMath = questions.some(q => q.section === 'math')
-
-            if (!hasEnglish && hasMath && currentSection === 1) {
-                setCurrentSection(2)
-                setTimeLeft(section2Duration)
-            }
-        }
-    }, [questions, currentSection, section2Duration])
-
-    useEffect(() => {
-        const handleMouseMove = (event: MouseEvent) => {
-            if (isDragging) {
-                setDesmosPosition({
-                    x: event.clientX - dragStart.current.x,
-                    y: event.clientY - dragStart.current.y
-                })
-            } else if (isResizing && !isDesmosMinimized) {
-                const deltaX = event.clientX - resizeStart.current.x
-                const deltaY = event.clientY - resizeStart.current.y
-                setDesmosSize({
-                    width: Math.max(400, resizeStart.current.width + deltaX),
-                    height: Math.max(300, resizeStart.current.height + deltaY)
-                })
-            }
-        }
-
-        const handleMouseUp = () => {
-            setIsDragging(false)
-            setIsResizing(false)
-        }
-
-        if (isDragging || isResizing) {
-            document.addEventListener('mousemove', handleMouseMove)
-            document.addEventListener('mouseup', handleMouseUp)
-        }
-
-        return () => {
-            document.removeEventListener('mousemove', handleMouseMove)
-            document.removeEventListener('mouseup', handleMouseUp)
-        }
-    }, [isDragging, isResizing, isDesmosMinimized])
-
-    const reading = questions.filter(q => q.section === 'english')
-    const calculus = questions.filter(q => q.section === 'math')
-
-    const activeQuestions = currentSection === 1 ? reading : calculus
-    const currentQuestion = activeQuestions[currentQuestionIndex]
-    const userChoice = currentQuestion ? selectedAnswers[currentQuestion.id] : undefined
-    const isCurrentFlagged = currentQuestion ? flaggedQuestions[currentQuestion.id] === true : false
-
-    useEffect(() => {
-        if (timeLeft <= 300) {
-            setIsTimerHidden(false)
-        }
-    }, [timeLeft])
-
-    useEffect(() => {
-        if (!isNewTest || isSubmitted || isOnBreak || isPaused || isLoading) return
-
-        const timer = setInterval(() => {
-            setTimeLeft((prev) => {
-                if (prev <= 1) {
-                    clearInterval(timer)
-                    if (currentSection === 1) {
-                        handleSectionTransition()
-                    } else {
-                        handleTriggerScoreCalculation()
-                    }
-                    return 0
-                }
-                return prev - 1
-            })
-        }, 1000)
-
-        return () => clearInterval(timer)
-    }, [isNewTest, isSubmitted, isOnBreak, isPaused, currentSection, isLoading])
-
-    useEffect(() => {
-        if (!isOnBreak) return
-
-        const breakTimer = setInterval(() => {
-            setBreakTimeLeft((prev) => {
-                if (prev <= 1) {
-                    clearInterval(breakTimer)
-                    setIsOnBreak(false)
-                    setCurrentSection(2)
-                    setCurrentQuestionIndex(0)
-                    setTimeLeft(section2Duration)
-                    setReview(false)
-                    return 0
-                }
-                return prev - 1
-            })
-        }, 1000)
-
-        return () => clearInterval(breakTimer)
-    }, [isOnBreak, section2Duration])
-
-    const formatTime = (seconds: number) => {
-        const minutes = Math.floor(seconds / 60)
-        const remainingSeconds = seconds % 60
-        return `${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`
-    }
-
-    const handleSelectOption = async (questionId: string, optionKey: string) => {
-        if (eliminatedOptions[questionId]?.includes(optionKey)) {
-            setEliminatedOptions(prev => ({
-                ...prev,
-                [questionId]: (prev[questionId] || []).filter(key => key !== optionKey)
-            }))
-        }
-
-        setSelectedAnswers(prev => ({ ...prev, [questionId]: optionKey }))
-        setIsSavingAnswer(prev => ({ ...prev, [questionId]: true }))
-
-        try {
-            const questionObj = questions.find(q => q.id === questionId)
-            if (questionObj) {
-                const isCorrect = checkIsCorrect(questionObj, optionKey)
-                const res = await submitAttemptAction({
-                    questionId: questionId,
-                    selectedOptionKey: optionKey,
-                    isCorrect: isCorrect,
-                    timeSpentSeconds: 0,
-                    testSessionId: testSessionId
-                })
-                if (res && !res.success && res.error === "Unauthorized session context") {
-                    setIsUnauthorized(true)
-                }
-            }
-        } catch (err) {
-            console.error(err)
-        } finally {
-            setIsSavingAnswer(prev => ({ ...prev, [questionId]: false }))
-        }
-    }
-
-    const handleToggleFlag = (questionId: string) => {
-        setFlaggedQuestions(prev => ({ ...prev, [questionId]: !prev[questionId] }))
-    }
-
-    const handleToggleCrossout = (questionId: string, optionKey: string, event?: React.MouseEvent) => {
-        if (event) event.stopPropagation()
-
-        if (selectedAnswers[questionId] === optionKey) {
-            setSelectedAnswers(prev => {
-                const nextObj = { ...prev }
-                delete nextObj[questionId]
-                return nextObj
-            })
-        }
-
-        setEliminatedOptions(prev => {
-            const list = prev[questionId] || []
-            const isExist = list.includes(optionKey)
-            return {
-                ...prev,
-                [questionId]: isExist ? list.filter(k => k !== optionKey) : [...list, optionKey]
-            }
-        })
-    }
-
-    const handleSectionTransition = () => {
-        setIsDesmosOpen(false)
-        setReview(false)
-        setCurrentQuestionIndex(0)
-        setIsOnBreak(true)
-        setBreakTimeLeft(breakDuration)
-    }
-
-    const handleNextQuestion = () => {
-        if (currentQuestionIndex === activeQuestions.length - 1) {
-            setReview(true)
-        } else {
-            setCurrentQuestionIndex(prev => Math.min(activeQuestions.length - 1, prev + 1))
-        }
-    }
-
-    const handlePrevQuestion = () => {
-        setCurrentQuestionIndex(prev => Math.max(0, prev - 1))
-    }
-
-    const handleMouseDown = (event: React.MouseEvent) => {
-        if ((event.target as HTMLElement).closest('.drag-handle')) {
-            setIsDragging(true)
-            dragStart.current = {
-                x: event.clientX - desmosPosition.x,
-                y: event.clientY - desmosPosition.y
-            }
-        }
-    }
-
-    const handleResizeMouseDown = (event: React.MouseEvent) => {
-        event.stopPropagation()
-        event.preventDefault()
-        if (isDesmosMinimized) return
-        setIsResizing(true)
-        resizeStart.current = {
-            width: desmosSize.width,
-            height: desmosSize.height,
-            x: event.clientX,
-            y: event.clientY
-        }
-    }
-
-    const handleTriggerScoreCalculation = async () => {
-        setWait(true)
-
-        const totalEnglish = reading.length
-        const totalMath = calculus.length
-
-        const englishCorrect = reading.reduce((acc, q) =>
-            acc + (checkIsCorrect(q, selectedAnswers[q.id]) ? 1 : 0), 0)
-
-        const mathCorrect = calculus.reduce((acc, q) =>
-            acc + (checkIsCorrect(q, selectedAnswers[q.id]) ? 1 : 0), 0)
-
-        const { rwScore, mathScore, totalScore } = calculateSatScore(englishCorrect, totalEnglish, mathCorrect, totalMath)
-
-        try {
-            const res = await submitTestSessionAction({
-                testSessionId,
-                englishCorrect,
-                englishTotal: totalEnglish,
-                mathCorrect,
-                mathTotal: totalMath,
-                rwScore,
-                mathScore,
-                totalScore
-            })
-            if (res && !res.success && res.error === "Unauthorized session context") {
-                setIsUnauthorized(true)
-                setWait(false)
-                return
-            }
-        } catch (err) {
-            console.error(err)
-        }
-
-        setTimeout(() => {
-            setWait(false)
-            setReport(true)
-            setIsSubmitted(true)
-        }, 2200)
-    }
-
-    const toggleRevealQuestion = (id: string) => {
-        setReveal(prev => ({ ...prev, [id]: !prev[id] }))
-    }
-
-    if (isUnauthorized) {
-        return (
-            <div className="h-screen w-screen bg-slate-50 flex items-center justify-center p-6 text-slate-900">
-                <div className="max-w-md w-full bg-white rounded-2xl border border-slate-200/80 p-8 text-center space-y-6 mx-auto shadow-sm">
-                    <div className="space-y-2">
-                        <h1 className="text-xl font-bold tracking-tight text-slate-900">Authentication Required</h1>
-                        <p className="text-sm text-slate-500 leading-relaxed">
-                            Your session could not be verified. Please log in to access the SAT Practice Suite.
-                        </p>
-                    </div>
-                    <Link href="/practice" className="block w-full py-3 bg-slate-900 hover:bg-slate-800 text-white font-semibold text-sm tracking-wider rounded-xl transition-all shadow-sm text-center">
-                        Return to Dashboard
-                    </Link>
-                </div>
-            </div>
-        )
-    }
-
-    if (!isNewTest) {
-        return (
-            <div className="h-screen w-screen bg-slate-50 flex items-center justify-center p-6 text-slate-900">
-                <div className="max-w-md w-full bg-white rounded-2xl border border-slate-200/80 p-8 text-center space-y-6 mx-auto shadow-sm">
-                    <div className="space-y-2">
-                        <h1 className="text-xl font-bold tracking-tight text-slate-900">SAT Practice Suite</h1>
-                        <p className="text-sm text-slate-500 leading-relaxed">
-                            Simulate an official modular testing sequence. Features clean interface configurations matching rigorous testing parameters.
-                        </p>
-                    </div>
-                    <button
-                        onClick={() => router.push('/practice/sat/test?new=true')}
-                        className="w-full py-3 bg-slate-900 hover:bg-slate-800 text-white font-semibold text-sm tracking-wider rounded-xl transition-all shadow-sm active:scale-[0.99] cursor-pointer"
-                    >
-                        Begin Digital SAT Simulation
-                    </button>
-                    <Link href="/practice" className="block text-sm font-medium text-slate-400 hover:text-slate-600 transition-colors">
-                        Return to Dashboard
-                    </Link>
-                </div>
-            </div>
-        )
-    }
-
-    if (isLoading) {
-        return (
-            <div className="h-screen w-screen flex items-center justify-center text-sm font-semibold tracking-widest text-slate-500 bg-slate-50 ">
-                <div className="flex flex-col items-center gap-4 mx-auto">
-                    <div className="w-8 h-8 border-3 border-slate-900 border-t-transparent rounded-full animate-spin"></div>
-                </div>
-            </div>
-        )
-    }
-
-    if (wait) {
-        return (
-            <div className="fixed inset-0 bg-slate-50 z-50 flex items-center justify-center p-6 text-slate-900">
-                <div className="max-w-sm w-full bg-white rounded-2xl border border-slate-200/80 p-8 text-center space-y-4 mx-auto shadow-md">
-                    <div className="space-y-1">
-                        <h2 className="text-base font-bold text-slate-900">Processing Parameters</h2>
-                        <p className="text-sm font-medium text-slate-400">Scaling responses to standardized grids...</p>
-                    </div>
-                    <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
-                        <div className="bg-slate-900 h-full rounded-full animate-pulse" style={{ width: '100%' }} />
-                    </div>
-                </div>
-            </div>
-        )
-    }
-
-    if (report && isSubmitted) {
-        const totalEnglish = reading.length
-        const totalMath = calculus.length
-
-        const englishCorrect = reading.reduce((acc, q) =>
-            acc + (checkIsCorrect(q, selectedAnswers[q.id]) ? 1 : 0), 0)
-
-        const mathCorrect = calculus.reduce((acc, q) =>
-            acc + (checkIsCorrect(q, selectedAnswers[q.id]) ? 1 : 0), 0)
-
-        const totalCorrect = englishCorrect + mathCorrect
-        const totalActive = reading.length + calculus.length
-
-        const { rwScore, mathScore, totalScore } = totalActive > 0
-            ? calculateSatScore(englishCorrect, totalEnglish, mathCorrect, totalMath)
-            : { rwScore: 0, mathScore: 0, totalScore: 0 }
-
-        return (
-            <div className="h-screen w-screen bg-slate-50 flex items-center justify-center p-4 sm:p-6 overflow-y-auto">
-                <div className="max-w-xl w-full bg-white rounded-2xl border border-slate-200 p-6 sm:p-8 space-y-6 shadow-xl max-h-[calc(100vh-2rem)] flex flex-col overflow-y-auto">
-                    <div className="text-center space-y-2 shrink-0">
-                        <h1 className="text-xl font-bold text-slate-900">Assessment Complete</h1>
-                        <p className="text-sm text-slate-500 leading-relaxed">
-                            Your performance analytics have been computed successfully.
-                        </p>
-                    </div>
-
-                    <div className="space-y-4 flex-1">
-                        <div className="bg-slate-900 rounded-2xl p-5 space-y-4 border border-slate-950 shadow-sm">
-                            <div className="text-left border-b border-slate-800 pb-3 flex justify-between items-baseline">
-                                <span className="text-sm font-bold text-slate-400 tracking-widest block">Total SAT Score</span>
-                                <span className="text-4xl font-extrabold tracking-tight text-white block font-mono">
-                                    {totalScore}
-                                </span>
-                            </div>
-                            <div className="grid grid-cols-2 gap-4 pt-1">
-                                <div className="text-left space-y-1">
-                                    <span className="text-sm font-bold text-slate-400 tracking-wider block">Reading & Writing</span>
-                                    <span className="text-lg font-bold text-white block font-mono">
-                                        {rwScore} <span className="text-sm text-slate-500 font-normal">/ 800</span>
-                                    </span>
-                                </div>
-                                <div className="text-left space-y-1">
-                                    <span className="text-sm font-bold text-slate-400 tracking-wider block">Mathematics</span>
-                                    <span className="text-lg font-bold text-white block font-mono">
-                                        {mathScore} <span className="text-sm text-slate-500 font-normal">/ 800</span>
-                                    </span>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-3">
-                            <div className="bg-slate-50 border border-slate-200/60 rounded-xl p-4 text-left">
-                                <span className="text-sm font-bold tracking-wider text-slate-400 block">Questions Correct</span>
-                                <span className="text-base font-extrabold text-slate-800 block mt-1 font-mono">{totalCorrect} / {totalActive}</span>
-                            </div>
-                            <div className="bg-slate-50 border border-slate-200/60 rounded-xl p-4 text-left">
-                                <span className="text-sm font-bold tracking-wider text-slate-400 block">Total Accuracy</span>
-                                <span className="text-base font-extrabold text-slate-800 block mt-1 font-mono">
-                                    {totalActive > 0 ? Math.round((totalCorrect / totalActive) * 100) : 0}%
-                                </span>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div className="pt-2 shrink-0">
-                        <button
-                            onClick={() => router.push('/practice')}
-                            className="w-full py-3.5 bg-slate-900 hover:bg-slate-800 text-white text-center font-bold text-sm tracking-wider rounded-xl transition-colors shadow-sm cursor-pointer"
-                        >
-                            Return to Dashboard
-                        </button>
-                    </div>
-                </div>
-            </div>
-        )
-    }
-
-    if (isOnBreak) {
-        return (
-            <div className="h-screen w-screen bg-slate-50 flex items-center justify-center p-6 text-slate-900">
-                <div className="max-w-lg w-full bg-white rounded-2xl border border-slate-200/80 p-8 text-center space-y-8 mx-auto shadow-sm">
-                    <div className="space-y-3">
-                        <span className="text-sm font-bold bg-slate-100 text-slate-800 px-3 py-1 rounded-full tracking-wider border border-slate-200">
-                            Official Intermission Period
-                        </span>
-                        <div className="w-full h-1"></div>
-                        <h1 className="text-2xl font-bold tracking-tight text-slate-900">Section Break</h1>
-                        <p className="text-sm text-slate-500 leading-relaxed max-w-sm mx-auto">
-                            Section 1 is now complete. You have a scheduled break before beginning Section 2.
-                        </p>
-                    </div>
-
-                    <div className="bg-slate-50 border border-slate-100 rounded-2xl p-5 max-w-xs mx-auto">
-                        <div className="text-sm font-bold text-slate-400 tracking-wider flex items-center justify-center gap-1.5">
-                            <Clock size={14} weight="bold" /> Time Remaining
-                        </div>
-                        <div className="text-3xl font-extrabold text-slate-900 mt-1 font-mono tracking-tight">{formatTime(breakTimeLeft)}</div>
-                    </div>
-
-                    <div className="flex justify-center pt-2">
-                        <div className="text-sm font-semibold text-slate-400 bg-slate-100 px-4 py-2 rounded-lg border border-slate-200">
-                            The section break is mandatory. Section 2 will automatically begin when the timer expires.
-                        </div>
-                    </div>
-                </div>
-            </div>
-        )
-    }
-
-    if (activeQuestions.length === 0) {
-        const hasMath = questions.some(q => q.section === 'math')
-        const hasEnglish = questions.some(q => q.section === 'english')
-
-        return (
-            <div className="h-screen w-screen bg-slate-50 flex flex-col items-center justify-center p-6 text-center text-slate-900">
-                <div className="max-w-md bg-white rounded-2xl border border-slate-200/80 p-8 space-y-5 mx-auto shadow-sm">
-                    <div className="space-y-2">
-                        <h3 className="text-md font-bold text-slate-900">No Standard Modules Formed</h3>
-                        <p className="text-sm text-slate-500 leading-relaxed">
-                            No loaded items align with the metrics for {currentSection === 1 ? 'Reading & Writing' : 'Mathematics'}.
-                        </p>
-                    </div>
-
-                    <div className="text-sm font-medium text-slate-500 bg-slate-50 border border-slate-100 p-3 rounded-xl font-mono">
-                        Pool Status: {questions.length} questions recognized.
-                    </div>
-
-                    <div className="flex flex-col gap-2 pt-2">
-                        {currentSection === 1 && hasMath && (
-                            <button
-                                onClick={() => setCurrentSection(2)}
-                                className="w-full py-3 bg-slate-900 hover:bg-slate-800 text-white text-sm font-bold tracking-wider rounded-xl transition-colors cursor-pointer"
-                            >
-                                Route to Mathematics Section
-                            </button>
-                        )}
-                        {currentSection === 2 && hasEnglish && (
-                            <button
-                                onClick={() => {
-                                    setCurrentSection(1)
-                                    setCurrentQuestionIndex(0)
-                                }}
-                                className="w-full py-3 bg-slate-900 hover:bg-slate-800 text-white text-sm font-bold tracking-wider rounded-xl transition-colors cursor-pointer"
-                            >
-                                Route to English Section
-                            </button>
-                        )}
-                        <Link href="/practice" className="inline-block text-sm font-medium text-slate-400 hover:text-slate-600 transition-colors mt-2">
-                            Return to Dashboard
-                        </Link>
-                    </div>
-                </div>
-            </div>
-        )
-    }
-
-    if (review) {
-        return (
-            <div className="h-screen w-screen bg-slate-50 flex flex-col overflow-hidden text-slate-900 relative">
-                <header className="h-16 bg-white border-b border-slate-200/60 px-6 flex items-center justify-between flex-shrink-0 z-20">
-                    <div className="flex flex-col">
-                        <span className="text-sm font-bold text-slate-400 tracking-widest block">
-                            Section {currentSection}: {currentSection === 1 ? 'Reading and Writing' : 'Mathematics'}
-                        </span>
-                        <span className="text-sm font-bold text-slate-800 block flex items-center gap-1.5 tracking-wide mt-0.5">
-                            <ListChecks size={18} weight="bold" className="text-slate-900" /> Section Review Summary
-                        </span>
-                    </div>
-                    <div className="flex items-center gap-3">
-                        {!isTimerHidden && (
-                            <div className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 border border-slate-200/40 text-slate-900 font-mono text-sm font-bold rounded-xl">
-                                <Clock size={16} weight="bold" className="text-slate-500" />
-                                <span>{formatTime(timeLeft)}</span>
-                            </div>
-                        )}
-                        <button
-                            onClick={() => setReview(false)}
-                            className="px-4 py-2 bg-white text-slate-700 border border-slate-200 rounded-xl font-bold text-sm tracking-wider hover:bg-slate-50 hover:border-slate-300 transition-all cursor-pointer"
-                        >
-                            Return to Test
-                        </button>
-                    </div>
-                </header>
-
-                <main className="flex-1 overflow-y-auto p-6 space-y-6 max-w-4xl w-full mx-auto">
-                    <div className="bg-white rounded-2xl border border-slate-200/80 p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-sm">
-                        <div className="space-y-1">
-                            <h2 className="text-base font-bold text-slate-900 tracking-wide">Review Your Progress</h2>
-                            <p className="text-sm text-slate-500 leading-relaxed">
-                                Review your answers before finalizing Section {currentSection}. You can expand questions below to preview content or jump directly to any item.
-                            </p>
-                        </div>
-                        <div className="flex gap-2 text-sm shrink-0">
-                            <div className="bg-slate-50 rounded-xl text-slate-600 px-3 py-2 border border-slate-200/60 font-semibold">
-                                Answered: {activeQuestions.filter(q => selectedAnswers[q.id] !== undefined).length} / {activeQuestions.length}
-                            </div>
-                            <div className="bg-amber-50 rounded-xl text-amber-700 px-3 py-2 border border-amber-200/60 font-semibold flex items-center gap-1">
-                                <Flag size={12} weight="fill" /> Flagged: {activeQuestions.filter(q => flaggedQuestions[q.id] === true).length}
-                            </div>
-                        </div>
-                    </div>
-
-                    <div className="space-y-3">
-                        {activeQuestions.map((q, idx) => {
-                            const choice = selectedAnswers[q.id]
-                            const isFlagged = flaggedQuestions[q.id] === true
-                            const isOpen = reveal[q.id] === true
-
-                            return (
-                                <div key={q.id} className="bg-white rounded-2xl border border-slate-200/70 overflow-hidden transition-all shadow-sm">
-                                    <div
-                                        className="p-4 flex items-center justify-between gap-4 cursor-pointer bg-white hover:bg-slate-50/70 select-none"
-                                        onClick={() => toggleRevealQuestion(q.id)}
-                                    >
-                                        <div className="flex items-center gap-3">
-                                            <button
-                                                onClick={(e) => {
-                                                    e.stopPropagation()
-                                                    setCurrentQuestionIndex(idx)
-                                                    setReview(false)
-                                                }}
-                                                className="w-9 h-9 bg-slate-100 border border-slate-200/40 rounded-xl text-slate-700 font-extrabold text-sm flex items-center justify-center hover:bg-slate-900 hover:text-white hover:border-slate-900 transition-all"
-                                                title="Jump directly to question"
-                                            >
-                                                {idx + 1}
-                                            </button>
-                                            <div className="flex flex-col">
-                                                <span className="text-sm font-bold text-slate-800">Question {idx + 1}</span>
-                                                <span className="text-sm font-bold text-slate-400 tracking-wider">{q.domain || 'General Pool'}</span>
-                                            </div>
-                                        </div>
-
-                                        <div className="flex items-center gap-4">
-                                            {isFlagged && (
-                                                <span className="bg-amber-50 text-amber-700 rounded-lg text-sm font-semibold px-2 py-1 border border-amber-200/60 flex items-center gap-1">
-                                                    <Flag size={12} weight="fill" /> Flagged
-                                                </span>
-                                            )}
-                                            <div className="flex items-center gap-2">
-                                                <span className="text-sm font-semibold text-slate-400">Response:</span>
-                                                <span className={`w-7 h-7 rounded-lg flex items-center justify-center text-sm font-bold border ${choice ? 'bg-slate-900 border-slate-900 text-white' : 'bg-slate-50 border-slate-200 text-slate-400 italic font-normal'}`}>
-                                                    {choice || '—'}
-                                                </span>
-                                            </div>
-                                            <div className="text-slate-400 hover:text-slate-600 p-1">
-                                                {isOpen ? <CaretUp size={16} weight="bold" /> : <CaretDown size={16} weight="bold" />}
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    {isOpen && (
-                                        <div className="px-6 pb-5 pt-2 border-t border-slate-100 bg-slate-50/40 text-sm text-slate-800 space-y-4">
-                                            <div className="text-slate-700 leading-relaxed bg-white p-4 rounded-xl border border-slate-200/60 font-normal shadow-sm">
-                                                {renderLexicalOrText(q.stimulus)}
-                                            </div>
-                                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                                                {q.options.map((opt) => (
-                                                    <div
-                                                        key={opt.key}
-                                                        className={`p-3 rounded-xl text-sm flex items-center gap-3 border transition-colors ${choice === opt.key ? 'bg-slate-50 border-slate-400 text-slate-950 font-semibold' : 'bg-white text-slate-600 border-slate-200'}`}
-                                                    >
-                                                        <span className={`w-6 h-6 rounded-lg flex items-center justify-center text-sm font-bold border ${choice === opt.key ? 'bg-slate-900 border-slate-900 text-white' : 'bg-slate-100 border-slate-200 text-slate-400'}`}>
-                                                            {opt.key}
-                                                        </span>
-                                                        <span className="overflow-x-auto w-full">{renderTextWithMath(opt.text)}</span>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    )}
-                                </div>
-                            )
-                        })}
-                    </div>
-                </main>
-
-                <footer className="h-16 bg-white border-t border-slate-200/60 px-6 flex items-center justify-between flex-shrink-0 z-20">
-                    <button
-                        onClick={() => setReview(false)}
-                        className="inline-flex items-center gap-2 px-4 py-2 border border-slate-200 bg-white rounded-xl text-slate-700 hover:bg-slate-50 text-sm font-bold tracking-wider transition-all cursor-pointer"
-                    >
-                        <ArrowLeft size={14} weight="bold" /> Back To Test
-                    </button>
-
-                    <button
-                        onClick={() => {
-                            if (currentSection === 1) {
-                                handleSectionTransition()
-                            } else {
-                                handleTriggerScoreCalculation()
-                            }
-                        }}
-                        className="inline-flex items-center gap-2 px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-sm font-bold tracking-wider rounded-xl transition-all shadow-sm active:scale-[0.99] cursor-pointer"
-                    >
-                        <span>{currentSection === 1 ? 'Skip Section' : 'Submit Exam'}</span>
-                    </button>
-                </footer>
-            </div>
-        )
-    }
-
-    return (
-        <div className="h-screen w-screen bg-slate-50 flex flex-col overflow-hidden text-slate-900 relative">
-
-            {currentSection === 2 && isDesmosOpen && (
-                <div
-                    ref={calculatorReference}
-                    style={{
-                        position: 'fixed',
-                        left: `${desmosPosition.x}px`,
-                        top: `${desmosPosition.y}px`,
-                        width: isDesmosMinimized ? '280px' : `${desmosSize.width}px`,
-                        height: isDesmosMinimized ? '42px' : `${desmosSize.height}px`,
-                        zIndex: 40,
-                    }}
-                    className="bg-white border border-slate-300 flex flex-col select-none rounded-2xl shadow-xl overflow-hidden"
-                    onMouseDown={handleMouseDown}
-                >
-                    <div className="drag-handle bg-slate-900 text-white px-4 py-3 flex items-center justify-between cursor-move text-sm font-bold tracking-wide border-b border-slate-800">
-                        <span className="flex items-center gap-1.5 tracking-wider text-sm text-slate-300">
-                            <Calculator size={14} weight="bold" /> Desmos Workspace
-                        </span>
-                        <div className="flex items-center gap-2">
-                            <button
-                                onClick={(e) => { e.stopPropagation(); setIsDesmosMinimized(!isDesmosMinimized); }}
-                                className="hover:text-slate-300 p-0.5 cursor-pointer bg-slate-800 rounded-md"
-                                title="Minimize Calculator"
-                            >
-                                <Minus size={12} weight="bold" />
-                            </button>
-                            <button
-                                onClick={(e) => { e.stopPropagation(); setIsDesmosOpen(false); }}
-                                className="hover:text-rose-400 p-0.5 cursor-pointer bg-slate-800 rounded-md"
-                                title="Close Calculator"
-                            >
-                                <XCircle size={12} weight="bold" />
-                            </button>
-                        </div>
-                    </div>
-
-                    {!isDesmosMinimized && (
-                        <div className="flex-1 bg-white relative w-full h-full">
-                            <iframe
-                                src="https://www.desmos.com/testing/cb-digital-sat/graphing"
-                                className="w-full h-full border-0"
-                                title="Official Digital SAT Desmos Calculator"
-                            />
-                            <div
-                                onMouseDown={handleResizeMouseDown}
-                                className="absolute bottom-0 right-0 w-5 h-5 cursor-se-resize bg-slate-100 flex items-center justify-center border-t border-l border-slate-200 rounded-tl-md"
-                                title="Resize Workspace"
-                            >
-                                <HandGrabbing size={12} className="text-slate-500" />
-                            </div>
-                        </div>
-                    )}
-                </div>
-            )}
-
-            {isPaused && (
-                <div className="fixed inset-0 bg-slate-900/20 backdrop-blur-md z-50 flex items-center justify-center p-6">
-                    <div className="bg-white rounded-2xl border border-slate-200 p-8 max-w-sm w-full text-center space-y-5 mx-auto shadow-xl">
-                        <h3 className="text-base font-bold text-slate-900 tracking-wide">Session Suspended</h3>
-                        <p className="text-sm text-slate-500 leading-relaxed">Your current runtime logs and state counters remain safely allocated. Do not exit out of the tab, information will not be saved until the test is completed.</p>
-                        <button
-                            onClick={() => setIsPaused(false)}
-                            className="w-full py-3 bg-slate-900 hover:bg-slate-800 text-white text-sm font-bold tracking-wider rounded-xl transition-all shadow-sm active:scale-[0.99]"
-                        >
-                            Resume Test
-                        </button>
-                    </div>
-                </div>
-            )}
-
-            <header className="h-16 bg-white border-b border-slate-200/60 px-6 flex items-center justify-between flex-shrink-0 z-20">
-                <div className="flex items-center gap-3">
-                    <span className="text-sm font-bold tracking-wide text-slate-800 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-100">
-                        {currentSection === 1 ? 'Section 1: Reading & Writing' : 'Section 2: Mathematics'} &bull; Question <span className="font-mono">{currentQuestionIndex + 1}</span> of <span className="font-mono">{activeQuestions.length}</span>
-                    </span>
-                    <button
-                        onClick={() => handleToggleFlag(currentQuestion.id)}
-                        className={`px-3 py-1.5 rounded-xl text-sm font-bold border transition-all flex items-center gap-1.5 cursor-pointer ${isCurrentFlagged ? 'bg-slate-900 border-slate-900 text-white shadow-sm' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50 hover:border-slate-300'}`}
-                    >
-                        <BookmarkSimple size={14} weight={isCurrentFlagged ? "fill" : "bold"} />
-                        <span>{isCurrentFlagged ? 'Flagged' : 'Flag Question'}</span>
-                    </button>
-
-                    {currentSection === 2 && (
-                        <button
-                            onClick={() => setIsDesmosOpen(!isDesmosOpen)}
-                            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-bold border transition-all cursor-pointer ${isDesmosOpen ? 'bg-slate-900 border-slate-900 text-white shadow-sm' : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50 hover:border-slate-300'}`}
-                        >
-                            <Calculator size={14} weight="bold" />
-                            <span>Graphing Calculator</span>
-                        </button>
-                    )}
-                </div>
-
-                <div className="flex items-center gap-4">
-                    {!isTimerHidden && (
-                        <div className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-50 border border-slate-200/60 text-slate-900 font-mono text-sm font-bold rounded-xl shadow-inner">
-                            <Clock size={16} weight="bold" className="text-slate-400" />
-                            <span>{formatTime(timeLeft)}</span>
-                        </div>
-                    )}
-                    <button
-                        onClick={() => setIsTimerHidden(!isTimerHidden)}
-                        className="text-sm font-bold text-slate-400 hover:text-slate-600 tracking-wide transition-colors"
-                    >
-                        {isTimerHidden ? 'Display Clock' : 'Hide Clock'}
-                    </button>
-                    <button
-                        onClick={() => setIsPaused(true)}
-                        className="px-3 py-1.5 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-600 hover:border-slate-300 transition-all"
-                    >
-                        Pause
-                    </button>
-                </div>
-            </header>
-
-            <main className="flex-1 min-h-0 overflow-hidden flex flex-col md:flex-row bg-[#fdfdfd] p-4 gap-4">
-                <div className="flex-1 min-h-0 overflow-y-auto p-6 bg-white rounded-2xl border border-slate-200/70 shadow-sm flex flex-col">
-                    <div className="text-sm font-bold text-slate-400 capitalize tracking-widest border-b border-slate-100 pb-2 mb-4 shrink-0">
-                        {currentQuestion.domain || 'Section Domain'} &bull; {currentQuestion.topic || 'General Metric'}
-                    </div>
-                    <div className="flex-1 text-slate-800 text-sm leading-relaxed font-normal select-text selection:bg-slate-100">
-                        {renderLexicalOrText(currentQuestion.stimulus)}
-                    </div>
-                </div>
-
-                <div className="flex-1 min-h-0 overflow-y-auto p-6 bg-white rounded-2xl border border-slate-200/70 shadow-sm flex flex-col justify-between">
-                    <div className="space-y-5 w-full">
-                        <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-                            <span className="text-sm font-bold text-slate-400 tracking-widest">Options Selection</span>
-                            <button
-                                onClick={() => setIsEliminatorActive(!isEliminatorActive)}
-                                className={`px-2.5 py-1 rounded-lg text-sm font-bold border transition-all ${isEliminatorActive ? 'bg-slate-900 border-slate-900 text-white shadow-sm' : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50 hover:border-slate-300'}`}
-                            >
-                                Eliminate Options
-                            </button>
-                        </div>
-
-                        <div className="space-y-2.5">
-                            {currentQuestion.options.map((opt) => {
-                                const isEliminated = eliminatedOptions[currentQuestion.id]?.includes(opt.key)
-                                const isSelected = userChoice === opt.key
-                                return (
-                                    <div
-                                        key={opt.key}
-                                        onClick={() => !isEliminated && handleSelectOption(currentQuestion.id, opt.key)}
-                                        className={`p-4 rounded-xl border text-sm flex items-center justify-between gap-4 transition-all cursor-pointer select-none group ${
-                                            isSelected
-                                                ? 'bg-slate-50/80 border-slate-900 text-slate-950 font-semibold ring-1 ring-slate-900'
-                                                : isEliminated
-                                                    ? 'bg-slate-50/50 border-slate-100 text-slate-400 line-through opacity-40'
-                                                    : 'bg-white border-slate-200/80 text-slate-700 hover:bg-slate-50 hover:border-slate-300'
-                                        }`}
-                                    >
-                                        <div className="flex items-center gap-4 overflow-x-auto w-full">
-                                            <span className={`w-7 h-7 rounded-lg border flex items-center justify-center font-bold text-sm shrink-0 transition-colors ${isSelected ? 'bg-slate-900 border-slate-900 text-white' : 'bg-slate-50 border-slate-200 text-slate-400 group-hover:bg-slate-100'}`}>
-                                                {opt.key}
-                                            </span>
-                                            <span className="leading-relaxed text-slate-800 text-sm py-0.5 overflow-x-auto w-full font-medium">
-                                                {renderTextWithMath(opt.text)}
-                                            </span>
-                                        </div>
-                                        {isEliminatorActive && (
-                                            <button
-                                                onClick={(e) => handleToggleCrossout(currentQuestion.id, opt.key, e)}
-                                                className="text-sm font-bold tracking-wider text-slate-400 hover:text-slate-800 hover:border-slate-300 shrink-0 border border-slate-200 rounded-lg px-2.5 py-1 bg-white shadow-none transition-colors"
-                                            >
-                                                {isEliminated ? 'Restore' : 'Strike'}
-                                            </button>
-                                        )}
-                                    </div>
-                                )
-                            })}
-                        </div>
-                    </div>
-
-                    <div className="pt-6 shrink-0 border-t border-slate-50 mt-6 flex items-center justify-between text-sm text-slate-400 font-medium">
-                        <span>
-                            {isSavingAnswer[currentQuestion.id] ? "Saving selection..." : "Progress captured"}
-                        </span>
-                    </div>
-                </div>
-            </main>
-
-            <footer className="h-16 bg-white border-t border-slate-200/60 px-6 flex items-center justify-between flex-shrink-0 z-20">
-                <button
-                    onClick={() => setReview(true)}
-                    className="inline-flex items-center gap-2 px-4 py-2 border border-slate-200 bg-white rounded-xl hover:bg-slate-50 hover:border-slate-300 text-slate-700 text-sm font-bold tracking-wider transition-all cursor-pointer"
-                >
-                    <ListChecks size={14} weight="bold" /> Review Questions
-                </button>
-
-                <div className="flex items-center gap-2">
-                    <button
-                        onClick={handlePrevQuestion}
-                        disabled={currentQuestionIndex === 0}
-                        className="inline-flex items-center gap-1 px-4 py-2 bg-white text-slate-700 border border-slate-200 rounded-xl disabled:opacity-40 disabled:cursor-not-allowed text-sm font-bold tracking-wider hover:bg-slate-50 hover:border-slate-300 transition-all"
-                    >
-                        <ArrowLeft size={12} weight="bold" /> Previous
-                    </button>
-                    <button
-                        onClick={handleNextQuestion}
-                        className="inline-flex items-center gap-1.5 px-5 py-2.5 bg-slate-900 text-white font-bold text-sm rounded-xl tracking-wider border border-slate-900 hover:bg-slate-800 transition-all shadow-sm active:scale-[0.99]"
-                    >
-                        {currentQuestionIndex === activeQuestions.length - 1 ? 'Review' : 'Next'} <ArrowRight size={12} weight="bold" />
-                    </button>
-                </div>
-            </footer>
-        </div>
-    )
-}
+  AlertCircle,
+  Bookmark,
+  Calculator,
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  ChevronUp,
+  Clock,
+  Coffee,
+  Eye,
+  EyeOff,
+  Pause,
+  Play,
+  Strikethrough,
+  Timer,
+  X,
+} from 'lucide-react'
+import toast from 'react-hot-toast'
+import { Breadcrumbs } from '@components/Objects/Breadcrumbs/Breadcrumbs'
+import Modal from '@components/Objects/StyledElements/Modal/Modal'
+import GeneralWrapperStyled from '@components/Objects/StyledElements/Wrappers/GeneralWrapper'
+import { cn } from '@/lib/utils'
+import { ChoiceList } from '../../_components/ChoiceList'
+import { DesmosCalculator } from '../../_components/DesmosCalculator'
+import {
+  BottomBar,
+  Card,
+  Explanation,
+  LoadingCard,
+  type NavStatus,
+  QuestionLayout,
+  QuestionNavigator,
+  primaryButton,
+  SignInCard,
+  StateCard,
+  secondaryButton,
+  toggleButton,
+} from '../../_components/PracticeUI'
+import {
+  isCorrectChoice,
+  SECTION_LABELS,
+  type SatQuestion,
+  type Section,
+  skillLabel,
+} from '@/lib/sat/sat'
+import { startPracticeTestAction, submitPracticeTestAction } from './actions'
+
+// Seconds. Short timers in development so the whole flow is quick to test.
+const isProd = process.env.NODE_ENV === 'production'
+const DURATION: Record<Section, number> = { english: isProd ? 600 : 60, math: isProd ? 600 : 120 }
+const BREAK_SECONDS = isProd ? 600 : 10
+const SHOW_TIMER_UNDER = 300
+
+type Result = Extract<Awaited<ReturnType<typeof submitPracticeTestAction>>, { success: true }>
+type Phase =
+  | { kind: 'intro' }
+  | { kind: 'loading' }
+  | { kind: 'unauthorized' }
+  | { kind: 'error'; message: string }
+  | { kind: 'section'; section: Section }
+  | { kind: 'break' }
+  | { kind: 'submitting' }
+  | { kind: 'results'; result: Result }
+
+const formatClock = (seconds: number) =>
+  `${Math.floor(seconds / 60)
+    .toString()
+    .padStart(2, '0')}:${(seconds % 60).toString().padStart(2, '0')}`
 
 export default function PracticeTestPage() {
-    return (
-        <Suspense fallback={null}>
-            <PracticeTestController />
-        </Suspense>
-    )
+  const [phase, setPhase] = useState<Phase>({ kind: 'intro' })
+  const [test, setTest] = useState<{
+    id: string
+    startedAt: string
+    english: SatQuestion[]
+    math: SatQuestion[]
+  } | null>(null)
+  const [answers, setAnswers] = useState<Record<string, string>>({})
+  const [flagged, setFlagged] = useState<Record<string, boolean>>({})
+  const [eliminated, setEliminated] = useState<Record<string, string[]>>({})
+  const [index, setIndex] = useState(0)
+  const [reviewing, setReviewing] = useState(false)
+  const [eliminateMode, setEliminateMode] = useState(false)
+  const [calculatorOpen, setCalculatorOpen] = useState(false)
+  const [navigatorOpen, setNavigatorOpen] = useState(false)
+  const [timerHidden, setTimerHidden] = useState(false)
+
+  // Deadline-based clock: immune to throttled intervals in background tabs.
+  const [deadline, setDeadline] = useState<number | null>(null)
+  const [remaining, setRemaining] = useState(0)
+  const [paused, setPaused] = useState(false)
+
+  const inProgress = phase.kind === 'section' || phase.kind === 'break'
+  const section = phase.kind === 'section' ? phase.section : null
+  const questions = section && test ? test[section] : []
+  const question = questions[index]
+
+  const startClock = (seconds: number) => {
+    setRemaining(seconds)
+    setDeadline(Date.now() + seconds * 1000)
+    setPaused(false)
+  }
+
+  const beginSection = useCallback((next: Section) => {
+    setPhase({ kind: 'section', section: next })
+    setIndex(0)
+    setReviewing(false)
+    setCalculatorOpen(false)
+    setTimerHidden(false)
+    startClock(DURATION[next])
+  }, [])
+
+  const submit = useCallback(async () => {
+    if (!test) return
+    setPhase({ kind: 'submitting' })
+    setDeadline(null)
+    setCalculatorOpen(false)
+    const res = await submitPracticeTestAction({
+      testSessionId: test.id,
+      startedAt: test.startedAt,
+      questionIds: [...test.english, ...test.math].map((q) => q.id),
+      answers,
+    })
+    if (res.success) return setPhase({ kind: 'results', result: res })
+    if (res.unauthorized) return setPhase({ kind: 'unauthorized' })
+    toast.error(res.error)
+    setPhase({ kind: 'error', message: res.error })
+  }, [test, answers])
+
+  const finishSection = useCallback(() => {
+    if (phase.kind === 'section' && phase.section === 'english' && test?.math.length) {
+      setPhase({ kind: 'break' })
+      setCalculatorOpen(false)
+      startClock(BREAK_SECONDS)
+    } else {
+      submit()
+    }
+  }, [phase, test, submit])
+
+  const onTimeUp = useRef<() => void>(() => {})
+  onTimeUp.current = () => {
+    if (phase.kind === 'break') beginSection('math')
+    else if (phase.kind === 'section') finishSection()
+  }
+
+  useEffect(() => {
+    if (!inProgress || paused || deadline === null) return
+    const tick = () => {
+      const left = Math.max(0, Math.ceil((deadline - Date.now()) / 1000))
+      setRemaining(left)
+      if (left === 0) {
+        setDeadline(null)
+        onTimeUp.current()
+      }
+    }
+    tick()
+    const id = window.setInterval(tick, 250)
+    return () => window.clearInterval(id)
+  }, [inProgress, paused, deadline])
+
+  // Leaving mid-test loses the attempt — ask first.
+  useEffect(() => {
+    if (!inProgress) return
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', warn)
+    return () => window.removeEventListener('beforeunload', warn)
+  }, [inProgress])
+
+  const pause = () => {
+    setPaused(true)
+    setDeadline(null)
+  }
+  const resume = () => startClock(remaining)
+
+  const start = async () => {
+    setPhase({ kind: 'loading' })
+    const res = await startPracticeTestAction()
+    if (res.unauthorized) return setPhase({ kind: 'unauthorized' })
+    if (!res.success) return setPhase({ kind: 'error', message: res.error })
+    if (!res.english.length && !res.math.length) {
+      return setPhase({ kind: 'error', message: 'There are no active questions in the CMS yet.' })
+    }
+    setTest({
+      id: res.testSessionId,
+      startedAt: res.startedAt,
+      english: res.english,
+      math: res.math,
+    })
+    setAnswers({})
+    setFlagged({})
+    setEliminated({})
+    beginSection(res.english.length ? 'english' : 'math')
+  }
+
+  const select = useCallback(
+    (key: string) => {
+      if (!question) return
+      setAnswers((prev) => ({ ...prev, [question.id]: key }))
+      setEliminated((prev) => ({
+        ...prev,
+        [question.id]: (prev[question.id] ?? []).filter((k) => k !== key),
+      }))
+    },
+    [question]
+  )
+
+  const go = useCallback(
+    (delta: number) =>
+      setIndex((i) => Math.min(Math.max(0, i + delta), Math.max(0, questions.length - 1))),
+    [questions.length]
+  )
+
+  useEffect(() => {
+    if (phase.kind !== 'section' || reviewing) return
+    const onKey = (event: KeyboardEvent) => {
+      if (navigatorOpen || paused || event.metaKey || event.ctrlKey || event.altKey) return
+      if (event.target instanceof Element && event.target.closest('input, textarea, select')) return
+      if (event.key === 'ArrowRight') go(1)
+      else if (event.key === 'ArrowLeft') go(-1)
+      else if (question && /^[a-e]$/i.test(event.key)) {
+        const key = event.key.toUpperCase()
+        if (!question.choices.some((c) => c.key === key)) return
+        // Same rules as clicking: cross-out mode toggles the strike, and a
+        // crossed-out choice is brought back rather than picked.
+        const crossed = eliminated[question.id]?.includes(key)
+        if (eliminateMode || crossed) {
+          setEliminated((prev) => {
+            const list = prev[question.id] ?? []
+            return {
+              ...prev,
+              [question.id]: crossed ? list.filter((k) => k !== key) : [...list, key],
+            }
+          })
+        } else select(key)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [
+    phase.kind,
+    reviewing,
+    navigatorOpen,
+    paused,
+    go,
+    select,
+    question,
+    eliminated,
+    eliminateMode,
+  ])
+
+  const navItems = useMemo(
+    () =>
+      questions.map((q) => ({
+        id: q.id,
+        status: (answers[q.id] ? 'answered' : 'unanswered') as NavStatus,
+        flagged: !!flagged[q.id],
+      })),
+    [questions, answers, flagged]
+  )
+
+  const showTimer = !timerHidden || remaining <= SHOW_TIMER_UNDER
+
+  return (
+    <GeneralWrapperStyled>
+      <div className="flex flex-col gap-4">
+        <Breadcrumbs
+          items={[
+            {
+              label: 'Practice',
+              href: '/practice',
+              icon: <GraduationCap size={14} weight="fill" />,
+            },
+            { label: 'Practice test' },
+          ]}
+        />
+
+        {phase.kind === 'intro' && <Intro onStart={start} />}
+        {phase.kind === 'loading' && <LoadingCard label="Building your test…" />}
+        {phase.kind === 'submitting' && <LoadingCard label="Scoring your test…" />}
+        {phase.kind === 'unauthorized' && (
+          <SignInCard description="Sign in to take a timed practice test and save your score." />
+        )}
+        {phase.kind === 'error' && (
+          <StateCard
+            icon={<AlertCircle size={20} />}
+            title="Something went wrong"
+            description={phase.message}
+          >
+            <button
+              type="button"
+              onClick={() => setPhase({ kind: 'intro' })}
+              className={primaryButton}
+            >
+              Start over
+            </button>
+            <Link href="/practice" className={secondaryButton}>
+              Back to practice
+            </Link>
+          </StateCard>
+        )}
+
+        {phase.kind === 'break' && (
+          <StateCard
+            icon={<Coffee size={20} />}
+            title="Reading and Writing complete"
+            description="Take a short break. The Math section starts automatically when the timer runs out — a calculator is available there."
+          >
+            <div className="w-full">
+              <div className="mx-auto mb-5 w-fit rounded-xl bg-gray-50 px-6 py-3 font-mono text-3xl font-bold tabular-nums text-gray-900">
+                {formatClock(remaining)}
+              </div>
+              <button type="button" onClick={() => beginSection('math')} className={primaryButton}>
+                <Play size={15} />
+                Start Math now
+              </button>
+            </div>
+          </StateCard>
+        )}
+
+        {phase.kind === 'results' && test && (
+          <Results test={test} answers={answers} result={phase.result} />
+        )}
+
+        {section && question && (
+          <>
+            <Card className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+              <div className="min-w-0">
+                <p className="font-semibold text-gray-900">
+                  Section {section === 'english' ? 1 : 2}: {SECTION_LABELS[section]}
+                </p>
+                <p className="text-xs text-gray-500">
+                  {questions.length} questions · {Math.round(DURATION[section] / 60)} minutes
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                {showTimer ? (
+                  <span
+                    className={cn(
+                      'flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-mono text-sm font-bold tabular-nums',
+                      remaining <= 60 ? 'bg-red-50 text-red-600' : 'bg-gray-50 text-gray-900'
+                    )}
+                  >
+                    <Clock size={14} />
+                    {formatClock(remaining)}
+                  </span>
+                ) : (
+                  <span className="text-sm text-gray-400">Timer hidden</span>
+                )}
+                {remaining > SHOW_TIMER_UNDER && (
+                  <button
+                    type="button"
+                    onClick={() => setTimerHidden((h) => !h)}
+                    className="rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700 cursor-pointer"
+                    title={timerHidden ? 'Show timer' : 'Hide timer'}
+                  >
+                    {timerHidden ? <Eye size={15} /> : <EyeOff size={15} />}
+                  </button>
+                )}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                {section === 'math' && (
+                  <button
+                    type="button"
+                    onClick={() => setCalculatorOpen((o) => !o)}
+                    className={toggleButton(calculatorOpen)}
+                  >
+                    <Calculator size={15} />
+                    Calculator
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setEliminateMode((m) => !m)}
+                  className={toggleButton(eliminateMode)}
+                >
+                  <Strikethrough size={15} />
+                  Eliminate
+                </button>
+                <button type="button" onClick={pause} className={secondaryButton}>
+                  <Pause size={15} />
+                  Pause
+                </button>
+              </div>
+            </Card>
+
+            {reviewing ? (
+              <Card className="p-6">
+                <h2 className="text-lg font-bold tracking-tight text-gray-900">Check your work</h2>
+                <p className="mt-1 text-sm text-gray-500">
+                  {navItems.filter((i) => i.status === 'answered').length} of {questions.length}{' '}
+                  answered · {navItems.filter((i) => i.flagged).length} marked for review. Select a
+                  question to go back to it.
+                </p>
+                <div className="mt-5 grid grid-cols-6 gap-2 sm:grid-cols-10">
+                  {navItems.map((item, i) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => {
+                        setIndex(i)
+                        setReviewing(false)
+                      }}
+                      className={cn(
+                        'relative h-10 rounded-lg text-sm font-semibold tabular-nums transition-colors cursor-pointer',
+                        item.status === 'answered'
+                          ? 'bg-gray-900 text-white hover:bg-gray-700'
+                          : 'border border-dashed border-gray-300 bg-white text-gray-600 hover:border-gray-400'
+                      )}
+                    >
+                      {i + 1}
+                      {item.flagged && (
+                        <span className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full bg-amber-400 ring-2 ring-white" />
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </Card>
+            ) : (
+              <QuestionLayout
+                question={question}
+                number={index + 1}
+                headerAction={
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setFlagged((prev) => ({ ...prev, [question.id]: !prev[question.id] }))
+                    }
+                    className={cn(
+                      'inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors cursor-pointer',
+                      flagged[question.id]
+                        ? 'bg-amber-50 text-amber-700'
+                        : 'text-gray-500 hover:bg-gray-100'
+                    )}
+                  >
+                    <Bookmark
+                      size={14}
+                      className={flagged[question.id] ? 'fill-amber-400 text-amber-500' : ''}
+                    />
+                    {flagged[question.id] ? 'Marked' : 'Mark for review'}
+                  </button>
+                }
+              >
+                <ChoiceList
+                  choices={question.choices}
+                  selected={answers[question.id]}
+                  onSelect={select}
+                  eliminateMode={eliminateMode}
+                  eliminated={eliminated[question.id]}
+                  onToggleEliminated={(key) =>
+                    setEliminated((prev) => {
+                      const list = prev[question.id] ?? []
+                      return {
+                        ...prev,
+                        [question.id]: list.includes(key)
+                          ? list.filter((k) => k !== key)
+                          : [...list, key],
+                      }
+                    })
+                  }
+                  math={section === 'math'}
+                />
+              </QuestionLayout>
+            )}
+
+            <BottomBar
+              left={
+                <button
+                  type="button"
+                  onClick={() => setNavigatorOpen(true)}
+                  className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 font-medium text-gray-700 hover:bg-gray-100 cursor-pointer"
+                >
+                  Question <span className="tabular-nums">{index + 1}</span> of{' '}
+                  <span className="tabular-nums">{questions.length}</span>
+                  <ChevronUp size={15} />
+                </button>
+              }
+              right={
+                reviewing ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setReviewing(false)}
+                      className={secondaryButton}
+                    >
+                      <ChevronLeft size={16} />
+                      Back
+                    </button>
+                    <button type="button" onClick={finishSection} className={primaryButton}>
+                      {section === 'english' && test?.math.length
+                        ? 'Finish section'
+                        : 'Submit test'}
+                      <ChevronRight size={16} />
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => go(-1)}
+                      disabled={index === 0}
+                      className={secondaryButton}
+                    >
+                      <ChevronLeft size={16} />
+                      Back
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => (index >= questions.length - 1 ? setReviewing(true) : go(1))}
+                      className={primaryButton}
+                    >
+                      {index >= questions.length - 1 ? 'Review' : 'Next'}
+                      <ChevronRight size={16} />
+                    </button>
+                  </>
+                )
+              }
+            />
+
+            <QuestionNavigator
+              open={navigatorOpen}
+              onOpenChange={setNavigatorOpen}
+              title={`Section ${section === 'english' ? 1 : 2}: ${SECTION_LABELS[section]}`}
+              items={navItems}
+              current={index}
+              onJump={(i) => {
+                setIndex(i)
+                setReviewing(false)
+              }}
+            />
+            {calculatorOpen && <DesmosCalculator onClose={() => setCalculatorOpen(false)} />}
+          </>
+        )}
+      </div>
+
+      <Modal
+        isDialogOpen={paused}
+        onOpenChange={(open) => !open && resume()}
+        dialogTitle="Test paused"
+        dialogDescription="The timer is stopped. Your answers stay on this page until you submit — don't close the tab."
+        customWidth="sm:max-w-md"
+        dialogContent={
+          <div className="flex items-center justify-between gap-4">
+            <span className="font-mono text-2xl font-bold tabular-nums text-gray-900">
+              {formatClock(remaining)}
+            </span>
+            <button type="button" onClick={resume} className={primaryButton}>
+              <Play size={15} />
+              Resume
+            </button>
+          </div>
+        }
+      />
+    </GeneralWrapperStyled>
+  )
+}
+
+function Intro({ onStart }: { onStart: () => void }) {
+  const modules: { section: Section; questions: number; note: string }[] = [
+    { section: 'english', questions: 27, note: 'Passages and single-question prompts' },
+    { section: 'math', questions: 22, note: 'Built-in Desmos graphing calculator' },
+  ]
+  return (
+    <Card className="mx-auto w-full max-w-2xl p-6 sm:p-8">
+      <div className="flex items-start gap-4">
+        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-white nice-shadow text-gray-800">
+          <Timer size={20} />
+        </div>
+        <div>
+          <h1 className="text-xl font-bold tracking-tight text-gray-900">Timed practice test</h1>
+          <p className="mt-1 text-sm leading-relaxed text-gray-500">
+            A fresh set of questions every time, in the same order and format as the Digital SAT.
+            Your answers are saved when you submit, and your score shows up on the practice
+            dashboard.
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-6 divide-y divide-gray-100 rounded-xl border border-gray-100">
+        {modules.map((m, i) => (
+          <div key={m.section} className="flex items-center gap-4 px-4 py-3">
+            <span className="flex h-7 w-7 items-center justify-center rounded-md bg-black text-xs font-bold text-white">
+              {i + 1}
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="font-medium text-gray-900">{SECTION_LABELS[m.section]}</p>
+              <p className="text-xs text-gray-500">{m.note}</p>
+            </div>
+            <span className="text-right text-sm tabular-nums text-gray-600">
+              {m.questions} questions · {Math.round(DURATION[m.section] / 60)} min
+            </span>
+          </div>
+        ))}
+      </div>
+
+      <ul className="mt-5 space-y-1.5 text-sm text-gray-500">
+        <li>• Mark questions for review and change answers any time before the section ends.</li>
+        <li>• A {Math.round(BREAK_SECONDS / 60) || 1}-minute break separates the two sections.</li>
+        <li>• Leaving the page ends the attempt without saving.</li>
+      </ul>
+
+      <div className="mt-7 flex flex-wrap gap-2">
+        <button type="button" onClick={onStart} className={primaryButton}>
+          <Play size={15} />
+          Begin test
+        </button>
+        <Link href="/practice" className={secondaryButton}>
+          Back to practice
+        </Link>
+      </div>
+    </Card>
+  )
+}
+
+function Results({
+  test,
+  answers,
+  result,
+}: {
+  test: { english: SatQuestion[]; math: SatQuestion[] }
+  answers: Record<string, string>
+  result: Result
+}) {
+  const [selected, setSelected] = useState<{ section: Section; index: number } | null>(null)
+  const totalCorrect = result.english.correct + result.math.correct
+  const total = result.english.total + result.math.total
+  const selectedQuestion = selected ? test[selected.section][selected.index] : undefined
+
+  return (
+    <div className="flex flex-col gap-4">
+      <Card className="grid gap-6 p-6 sm:grid-cols-[minmax(0,1.4fr)_repeat(2,minmax(0,1fr))]">
+        <div>
+          <p className="text-sm font-medium text-gray-500">Total score</p>
+          <p className="mt-1 text-5xl font-bold tracking-tight tabular-nums text-gray-900">
+            {result.totalScore}
+            <span className="ml-1.5 text-base font-normal text-gray-400">/ 1600</span>
+          </p>
+          <p className="mt-2 text-sm text-gray-500">
+            {totalCorrect} of {total} correct (
+            {total ? Math.round((totalCorrect / total) * 100) : 0}%)
+          </p>
+        </div>
+        <ResultStat label="Reading and Writing" score={result.rwScore} tally={result.english} />
+        <ResultStat label="Math" score={result.mathScore} tally={result.math} />
+      </Card>
+
+      <Card className="p-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="font-semibold text-gray-900">Review your answers</h2>
+            <p className="text-xs text-gray-500">
+              Select a question to see the correct answer and explanation.
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <Link href="/practice" className={secondaryButton}>
+              Back to practice
+            </Link>
+          </div>
+        </div>
+        {(['english', 'math'] as Section[])
+          .filter((s) => test[s].length)
+          .map((s) => (
+            <div key={s} className="mt-5">
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">
+                {SECTION_LABELS[s]}
+              </p>
+              <div className="grid grid-cols-6 gap-2 sm:grid-cols-10 lg:grid-cols-14">
+                {test[s].map((q, i) => {
+                  const correct = result.results[q.id]
+                  const isActive = selected?.section === s && selected.index === i
+                  return (
+                    <button
+                      key={q.id}
+                      type="button"
+                      onClick={() => setSelected(isActive ? null : { section: s, index: i })}
+                      title={skillLabel(q.skill)}
+                      className={cn(
+                        'flex h-9 items-center justify-center gap-0.5 rounded-lg text-sm font-semibold tabular-nums text-white transition-colors cursor-pointer',
+                        correct
+                          ? 'bg-emerald-500 hover:bg-emerald-600'
+                          : answers[q.id]
+                            ? 'bg-red-500 hover:bg-red-600'
+                            : 'bg-gray-300 hover:bg-gray-400',
+                        isActive && 'ring-2 ring-black ring-offset-2'
+                      )}
+                    >
+                      {i + 1}
+                      {correct ? (
+                        <Check size={11} strokeWidth={3} />
+                      ) : (
+                        <X size={11} strokeWidth={3} />
+                      )}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          ))}
+      </Card>
+
+      {selected && selectedQuestion && (
+        <QuestionLayout question={selectedQuestion} number={selected.index + 1}>
+          <ChoiceList
+            choices={selectedQuestion.choices}
+            selected={answers[selectedQuestion.id]}
+            onSelect={() => {}}
+            revealAnswer={selectedQuestion.answer}
+            disabled
+            math={selectedQuestion.section === 'math'}
+          />
+          {!answers[selectedQuestion.id] && (
+            <p className="text-sm text-gray-500">You skipped this question.</p>
+          )}
+          <Explanation
+            question={selectedQuestion}
+            correct={isCorrectChoice(selectedQuestion, answers[selectedQuestion.id])}
+          />
+        </QuestionLayout>
+      )}
+    </div>
+  )
+}
+
+function ResultStat({
+  label,
+  score,
+  tally,
+}: {
+  label: string
+  score: number
+  tally: { correct: number; total: number }
+}) {
+  return (
+    <div>
+      <p className="text-sm font-medium text-gray-500">{label}</p>
+      <p className="mt-1 text-2xl font-bold tracking-tight tabular-nums text-gray-900">
+        {tally.total ? score : '—'}
+        <span className="ml-1 text-sm font-normal text-gray-400">/ 800</span>
+      </p>
+      <p className="text-xs text-gray-500">
+        {tally.correct} of {tally.total} correct
+      </p>
+    </div>
+  )
 }

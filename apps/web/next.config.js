@@ -1,7 +1,23 @@
+const path = require('path')
 const { withSentryConfig } = require("@sentry/nextjs");
+
+// pnpm workspace root — standalone output is traced from here so the Docker
+// image gets server.js at .next/standalone/apps/web/server.js.
+const workspaceRoot = path.join(__dirname, '../..')
 
 /** @type {import('common.next').NextConfig} */
 const nextConfig = {
+  outputFileTracingRoot: workspaceRoot,
+  // proxy.ts rewrites every page to /orgs/<slug>/…. In the standalone server
+  // (Docker) Next builds the proxy's request URL from "localhost" but its own
+  // origin from HOSTNAME (0.0.0.0), so those rewrites looked external and the
+  // server proxied to itself until it failed (HTTP 431 / timeouts). Using the
+  // real request URL keeps rewrites and redirects internal. App Router only,
+  // so the /_next/data normalization this skips doesn't apply.
+  skipProxyUrlNormalize: true,
+  turbopack: {
+    root: workspaceRoot,
+  },
   // Required by PostHog's reverse-proxy rewrites below so the trailing-slash
   // handling on /ingest/* doesn't 308-redirect ingestion requests.
   skipTrailingSlashRedirect: true,
@@ -112,6 +128,8 @@ if (process.env.NODE_ENV === 'development') {
     `window.__RUNTIME_CONFIG__ = ${JSON.stringify(runtimeConfig)};`,
     'utf8'
   )
+  // A runtime-config.json left behind by `pnpm start` would shadow .env here.
+  fs.rmSync(path.join(__dirname, 'runtime-config.json'), { force: true })
 }
 
 // Always wrap with Sentry — DSN is resolved at runtime, not build time

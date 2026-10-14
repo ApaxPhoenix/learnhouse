@@ -465,9 +465,9 @@ const UserProfileBuilder = () => {
 
             <div className="pt-4">
               <Select
-                onValueChange={(value: keyof typeof SECTION_TYPES) => {
+                onValueChange={(value) => {
                   if (value) {
-                    addSection(value)
+                    addSection(value as keyof typeof SECTION_TYPES)
                   }
                 }}
               >

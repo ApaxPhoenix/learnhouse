@@ -28,9 +28,11 @@ yarn-error.log*
 .env.development.local
 .env.test.local
 .env.production.local
+.env.docker
 
-# turbo
+# turbo / pnpm
 .turbo
+.pnpm-store
 
 # vercel
 .vercel

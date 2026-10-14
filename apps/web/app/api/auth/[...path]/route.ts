@@ -10,7 +10,11 @@ import {
   getCookieOptions,
 } from '@services/auth/cookies'
 
-const BACKEND_URL = (getConfig('NEXT_PUBLIC_LEARNHOUSE_BACKEND_URL') || 'http://localhost:1338').replace(/\/+$/, '')
+const BACKEND_URL = (
+  getConfig('LEARNHOUSE_INTERNAL_BACKEND_URL') ||
+  getConfig('NEXT_PUBLIC_LEARNHOUSE_BACKEND_URL') ||
+  'http://localhost:1338'
+).replace(/\/+$/, '')
 
 // Paths that return tokens in response body (relative to /api/v1/auth/)
 // `verify-email` auto-signs-in the user on successful email verification, so
